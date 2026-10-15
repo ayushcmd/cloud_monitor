@@ -1,0 +1,64 @@
+groups:
+  - name: cloudMonitor_infrastructure_alerts
+    rules:
+      - alert: HostHighCpuUtilization
+        expr: (100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)) > 85
+        for: 1m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Host CPU utilization exceeds 85%"
+          description: "Host instance {{ $labels.instance }} CPU utilization is currently at {{ $value }}%."
+
+      - alert: HostHighMemoryUtilization
+        expr: ((1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100) > 85
+        for: 1m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Host memory utilization exceeds 85%"
+          description: "Host memory utilization on {{ $labels.instance }} is currently at {{ $value }}%."
+
+  - name: cloudMonitor_application_alerts
+    rules:
+      - alert: CloudMonitorApplicationDown
+        expr: up{job="cloudmonitor-backend"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "CloudMonitor backend API instance is DOWN"
+          description: "The CloudMonitor backend service target has been unreachable for more than 15 seconds."
+
+      - alert: CloudMonitorHealthDegraded
+        expr: cloudmonitor_app_health_status == 0
+        for: 15s
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "CloudMonitor application health status reported degraded"
+          description: "The application self-diagnostic probe has reported unhealthy (gauge=0)."
+
+      - alert: HighHttpErrorRate
+        expr: sum(rate(cloudmonitor_http_requests_total{status_code=~"5.."}[1m])) > 0.05
+        for: 30s
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "Elevated 5xx HTTP error rate detected"
+          description: "CloudMonitor backend is returning elevated 5xx server errors at {{ $value }} errors/sec."
+
+      - alert: HighRequestLatency
+        expr: histogram_quantile(0.95, sum(rate(cloudmonitor_http_request_duration_seconds_bucket[1m])) by (le)) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "P95 HTTP response latency exceeds 500ms SLO target"
+          description: "95% of API requests are taking longer than 500ms (current P95: {{ $value }}s)."

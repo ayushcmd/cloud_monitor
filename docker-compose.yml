@@ -59,7 +59,8 @@ services:
       - '--docker='
       - '--containerd=/var/run/containerd/containerd.sock'
       - '--containerd-namespace=moby'
-      - '--housekeeping_interval=5s'
+      - '--disable_metrics=disk,tcp,udp,percpu'
+      - '--housekeeping_interval=10s'
     networks:
       - cloudmonitor-net
 
@@ -130,6 +131,7 @@ services:
       start_period: 5s
 
   frontend:
+    profiles: ["frontend"]
     image: cloudmonitor-frontend:latest
     build:
       context: ./frontend
