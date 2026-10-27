@@ -13,6 +13,11 @@ on:
         type: choice
         options:
           - production
+      diagnostic_only:
+        description: "Run diagnostic connectivity check only (reports runner egress IP, skips deployment)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: production-deployment
@@ -22,8 +27,39 @@ permissions:
   contents: read
 
 jobs:
+  diagnostics:
+    name: Runner Network & IP Diagnostics
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_only == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Discover Runner Public Egress IP
+        run: |
+          echo "=== GitHub-hosted Runner Egress IP Discovery ==="
+          RUNNER_IP=$(curl -s -m 5 https://api.ipify.org || curl -s -m 5 https://ifconfig.me || curl -s -m 5 https://icanhazip.com)
+          echo "Runner Public Egress IP: $RUNNER_IP"
+          echo "================================================="
+          echo "Note: If inbound SSH traffic is restricted, verify that network access control permits traffic from this runner's IP address."
+
+      - name: Probe TCP Port 22 Reachability
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          if [ -z "$EC2_HOST" ]; then
+            echo "::warning::Secret EC2_HOST is not configured; skipping port 22 probe."
+            exit 0
+          fi
+          echo "Probing TCP port 22 reachability to EC2 host..."
+          if nc -z -w 5 "$EC2_HOST" 22 >/dev/null 2>&1; then
+            echo "Result: Port 22 is OPEN and REACHABLE from this runner."
+          else
+            echo "::error::Result: Port 22 is unreachable from this runner (connection timed out or refused). This may be due to an AWS Security Group, Network ACL, routing, host firewall, or other network restriction."
+            exit 1
+          fi
+
   deploy:
     name: Deploy to AWS EC2
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.diagnostic_only)
     environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 15
