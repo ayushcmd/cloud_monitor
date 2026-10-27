@@ -43,9 +43,9 @@ jobs:
 
       - name: Run Python test suite
         env:
-          APP_ENV: test
-          JWT_SECRET_KEY: ci_test_secret_key_at_least_32_characters_long_for_tests
-          DATABASE_URL: sqlite:///:memory:
+          APP_ENV: "test"
+          JWT_SECRET_KEY: "ci_test_secret_key_at_least_32_characters_long_for_tests"
+          DATABASE_URL: "sqlite:///:memory:"
         run: |
           PYTHONPATH=. pytest -v --tb=short tests/ agent/tests/
 
@@ -94,9 +94,9 @@ jobs:
 
       - name: Validate Production Compose File Syntax
         env:
-          POSTGRES_PASSWORD: placeholder_password_for_validation
-          JWT_SECRET_KEY: placeholder_jwt_secret_for_validation_at_least_32_chars
-          DATABASE_URL: postgresql://cloudmonitor:placeholder@postgres:5432/cloudmonitor
+          POSTGRES_PASSWORD: "placeholder_password_for_validation"
+          JWT_SECRET_KEY: "placeholder_jwt_secret_for_validation_at_least_32_chars"
+          DATABASE_URL: "postgresql://cloudmonitor:placeholder@postgres:5432/cloudmonitor"
         run: |
           docker compose -f docker-compose.prod.yml config --quiet
           echo "docker-compose.prod.yml syntax is valid."
