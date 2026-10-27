@@ -1,0 +1,28 @@
+# CloudMonitor Automated TLS Reverse Proxy Configuration
+# Caddy automatically provisions and renews Let's Encrypt certificates
+# for the specified DOMAIN_NAME.
+
+{$DOMAIN_NAME:localhost} {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Backend API routes
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Backend Health check
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # Frontend React SPA
+    handle {
+        reverse_proxy frontend:80
+    }
+}

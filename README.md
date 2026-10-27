@@ -223,6 +223,14 @@ The backend natively exports standard Prometheus metrics:
 
 ---
 
-## 9. License
+## 9. CI/CD & Production Operations
+
+- **Continuous Integration**: Automated test suite (pytest), React frontend build (ite), and Docker Compose validation run on every pull request and push via [GitHub Actions CI](.github/workflows/ci.yml).
+- **Continuous Deployment**: Automated zero-downtime deployment to AWS EC2 triggers safely on merges to main via [GitHub Actions CD](.github/workflows/cd.yml).
+- **Operations & Runbook**: See [docs/CICD_SETUP_GUIDE.md](docs/CICD_SETUP_GUIDE.md) for required GitHub secrets, monitoring, troubleshooting, and database-safe rollback instructions.
+
+---
+
+## 10. License
 
 This project is licensed under the [MIT License](LICENSE).

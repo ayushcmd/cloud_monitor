@@ -56,3 +56,29 @@ desktop.ini
 *~
 .idea/
 .vscode/
+
+# Credentials & Agent Secret files
+*.pem
+*.key
+.env.agent
+
+# Local secrets and deployment archives
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+*.tar.gz
+*.sql
+*.log
+cloudmonitor-deploy.tar.gz
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
