@@ -11,7 +11,7 @@ CloudMonitor is a self-hosted observability platform for monitoring Docker hosts
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus)](https://prometheus.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](../LICENSE)
 
 ---
 
@@ -272,4 +272,4 @@ This is a collaborative Cloud Computing mini project. Individual contributions a
 
 ## License
 
-CloudMonitor is licensed under the MIT License. See [LICENSE](LICENSE).
+CloudMonitor is licensed under the MIT License. See [LICENSE](../LICENSE).
