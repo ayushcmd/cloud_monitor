@@ -44,8 +44,18 @@ The pipeline consists of two GitHub Actions workflow files located in `.github/w
 
 To enable automated deployment to your AWS EC2 instance, configure the following secrets in GitHub:
 
-1. Navigate to: **GitHub Repository &rarr; Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret**
-2. Add the following four secrets:
+### A. Secret Configuration Scope
+You can configure these secrets under **Repository secrets** (recommended for simplicity) or under a GitHub **Environment** named `production`:
+
+1. **Option 1: Repository Secrets (Recommended)**:
+   - Navigate to: **GitHub Repository &rarr; Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret**
+2. **Option 2: Environment Secrets**:
+   - Navigate to: **GitHub Repository &rarr; Settings &rarr; Environments &rarr; New environment (Name: `production`) &rarr; Add Environment secret**
+
+> [!NOTE]
+> The CD workflow defines `environment: production`. GitHub Actions automatically checks environment-level secrets first; if not present, it seamlessly falls back to repository-level secrets.
+
+### B. Required Secret Definitions
 
 | Secret Name | Description | Example / Value |
 | :--- | :--- | :--- |
@@ -55,8 +65,8 @@ To enable automated deployment to your AWS EC2 instance, configure the following
 | `EC2_SSH_KNOWN_HOSTS` | Verified public host key line for the EC2 server (enables strict SSH host verification) | `3.25.150.231 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEBsqrR6gAY2i/qk4kcm1Nycvq7I34j3nyUDEbM4uJpR` |
 
 > [!IMPORTANT]
-> - **EC2_SSH_PRIVATE_KEY**: Paste the private key in full, including the `-----BEGIN ...-----` and `-----END ...-----` headers. Ensure there are no accidental trailing spaces.
-> - **EC2_SSH_KNOWN_HOSTS**: Unlike insecure configurations that set `StrictHostKeyChecking no`, our pipeline strictly validates the host key against `EC2_SSH_KNOWN_HOSTS` before sending any credentials. This prevents Man-in-the-Middle (MITM) attacks.
+> - **EC2_SSH_PRIVATE_KEY**: Paste the private key in full, including the `-----BEGIN ...-----` and `-----END ...-----` headers. The pipeline automatically strips any Windows CRLF line endings.
+> - **EC2_SSH_KNOWN_HOSTS**: Unlike insecure configurations that set `StrictHostKeyChecking no`, our pipeline strictly validates the host key against `EC2_SSH_KNOWN_HOSTS` before sending credentials. This protects against Man-in-the-Middle (MITM) attacks.
 
 ### How to Verify the EC2 Host Key Fingerprint
 You can cryptographically verify that the host key matches your AWS EC2 instance before adding it:
@@ -74,7 +84,7 @@ You can cryptographically verify that the host key matches your AWS EC2 instance
 
 ### AWS Security Group Requirements
 - For GitHub-hosted runners to execute deployments, the EC2 instance's Security Group must allow inbound TCP traffic on **Port 22 (SSH)**.
-- If using standard GitHub-hosted runners without self-hosted gateway runners, port 22 inbound source should be set to `0.0.0.0/0` (or the GitHub Actions IP ranges from `https://api.github.com/meta`).
+- Inbound source should be set to `0.0.0.0/0` (or GitHub Actions IP ranges from `https://api.github.com/meta`).
 
 ### Production `.env` File Guard
 - The CD pipeline requires that `/home/ubuntu/cloud_monitor/.env` already exists on the EC2 host.
@@ -82,7 +92,24 @@ You can cryptographically verify that the host key matches your AWS EC2 instance
 
 ---
 
-## 3. How Changes Flow to Production
+## 3. Preparation Checklist for First Automated Deployment
+
+Follow these sequential steps to ensure a smooth first deployment:
+
+1. [ ] **Verify Server Inbound Rules**:
+   Ensure AWS Security Group for `3.25.150.231` allows Port 22 (SSH) and Port 80 (HTTP).
+2. [ ] **Verify Server Host Configuration**:
+   Ensure `/home/ubuntu/cloud_monitor/.env` exists on the EC2 instance with valid production secrets (`POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, `DATABASE_URL`).
+3. [ ] **Add Required Secrets in GitHub**:
+   In GitHub repository settings (`Settings -> Secrets and variables -> Actions`), add `EC2_HOST`, `EC2_USER`, `EC2_SSH_PRIVATE_KEY`, and `EC2_SSH_KNOWN_HOSTS`.
+4. [ ] **Merge Fix Pull Request**:
+   Merge the audited remediation PR into `main`.
+5. [ ] **Monitor Deployment Run**:
+   In GitHub Actions, monitor the CD run. It will validate secrets, establish an SSH session with strict verification, pull/build images, restart containers idempotently, and execute bounded health checks on Frontend, Backend, and Prometheus targets.
+
+---
+
+## 4. How Changes Flow to Production
 
 ```mermaid
 flowchart LR
@@ -101,7 +128,7 @@ flowchart LR
 
 ---
 
-## 4. Operational Runbook
+## 5. Operational Runbook
 
 ### Inspecting Workflow Runs & Logs
 1. Go to the **Actions** tab on your GitHub repository: `https://github.com/ayushcmd/cloud_monitor/actions`.
