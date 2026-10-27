@@ -1,0 +1,146 @@
+name: CloudMonitor CD — Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: "Target environment to deploy"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Deployment Secrets
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$EC2_HOST" ]; then
+            echo "::error::Secret EC2_HOST is not configured in repository secrets."
+            exit 1
+          fi
+          if [ -z "$EC2_USER" ]; then
+            echo "::error::Secret EC2_USER is not configured in repository secrets."
+            exit 1
+          fi
+          if [ -z "$EC2_KEY" ]; then
+            echo "::error::Secret EC2_SSH_PRIVATE_KEY is not configured in repository secrets."
+            exit 1
+          fi
+          echo "All required deployment secrets are present."
+
+      - name: Set up SSH Private Key
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat << 'EOF' > ~/.ssh/config
+          Host ec2-target
+            HostName ${{ secrets.EC2_HOST }}
+            User ${{ secrets.EC2_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            ConnectTimeout 15
+            BatchMode yes
+          EOF
+
+      - name: Verify SSH Connectivity to EC2
+        run: |
+          echo "Verifying secure SSH connectivity to EC2 host..."
+          ssh ec2-target "uptime && docker --version"
+
+      - name: Deploy Application Stack via Docker Compose
+        run: |
+          echo "Syncing latest configuration and deploying services to EC2..."
+          ssh ec2-target "bash -s" << 'EOF'
+            set -euo pipefail
+            DEPLOY_DIR="/home/ubuntu/cloud_monitor"
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            # 1. Update repository if git is configured, otherwise maintain working directory
+            if [ -d .git ]; then
+              git fetch origin
+              git checkout main || git checkout master
+              git pull --ff-only
+            fi
+
+            # 2. Verify production .env exists (never overwritten or exposed)
+            if [ ! -f .env ]; then
+              echo "::warning::Production .env not found. Initializing from .env.production.example (manual review required)."
+              cp .env.production.example .env
+            fi
+
+            # 3. Pull required external images
+            sudo docker compose -f docker-compose.prod.yml pull prometheus node-exporter alertmanager postgres || true
+
+            # 4. Safely build/update backend and frontend without disturbing PostgreSQL volumes
+            sudo docker compose -f docker-compose.prod.yml build backend frontend
+
+            # 5. Bring up services idempotently (preserves postgres_data volume)
+            sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            echo "Stack deployment commands completed successfully."
+          EOF
+
+      - name: Verify Production Health and Telemetry Endpoints
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          echo "Performing post-deployment health check against EC2 entrypoint..."
+          HEALTH_URL="http://${EC2_HOST}/health"
+          PROMETHEUS_TARGETS_URL="http://${EC2_HOST}/prom/api/v1/targets"
+
+          # Wait for Nginx and backend to be fully responsive
+          for i in {1..12}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check succeeded: $HEALTH_URL returned HTTP 200"
+              break
+            fi
+            echo "Waiting for backend health probe (attempt $i/12, status: $STATUS)..."
+            sleep 5
+          done
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Backend health check failed at $HEALTH_URL"
+            exit 1
+          fi
+
+          echo "Validating Prometheus scrape targets proxy..."
+          TARGETS_RES=$(curl -s "$PROMETHEUS_TARGETS_URL" || true)
+          if echo "$TARGETS_RES" | grep -q '"status":"success"'; then
+            echo "Prometheus targets check succeeded."
+          else
+            echo "::warning::Prometheus targets endpoint returned non-success response."
+          fi
+
+      - name: Clean up SSH Private Key
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
+          echo "SSH credentials removed from runner environment."

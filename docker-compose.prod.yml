@@ -1,0 +1,205 @@
+name: cloudmonitor-prod
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL Database (Private — NO host ports exposed)
+  #    Memory-tuned for 1 GB RAM EC2 instance (~50-65 MB footprint)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloudmonitor-postgres
+    restart: unless-stopped
+    command: postgres -c shared_buffers=64MB -c max_connections=40 -c work_mem=4MB -c maintenance_work_mem=32MB
+    expose:
+      - "5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-cloudmonitor}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-cloudmonitor}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - cloudmonitor-net
+
+  # ----------------------------------------------------------------------------
+  # 2. FastAPI Application Backend (Private — NO host ports exposed)
+  #    Lightweight Python runtime (~75-90 MB footprint)
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: cloudmonitor-backend:latest
+    container_name: cloudmonitor-backend
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      - APP_NAME=${APP_NAME:-CloudMonitor-API}
+      - APP_ENV=production
+      - PORT=8000
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://3.25.150.231,http://localhost}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8000/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cloudmonitor-net
+
+  # ----------------------------------------------------------------------------
+  # 3. React 18 Frontend & Edge Nginx Proxy (Public entrypoint)
+  #    Ultra-lightweight static file server + /api/ reverse proxy (~15 MB footprint)
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-}
+    image: cloudmonitor-frontend:latest
+    container_name: cloudmonitor-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/ || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cloudmonitor-net
+
+  # ----------------------------------------------------------------------------
+  # 4. Prometheus Monitoring Engine (Private — NO host ports exposed)
+  #    Memory-tuned for 1 GB RAM EC2 (~35-45 MB footprint)
+  # ----------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: cloudmonitor-prometheus
+    restart: unless-stopped
+    expose:
+      - "9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=2d'
+      - '--storage.tsdb.min-block-duration=2h'
+      - '--storage.tsdb.max-block-duration=2h'
+      - '--web.enable-lifecycle'
+    networks:
+      - cloudmonitor-net
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 5. Prometheus Node Exporter (Private — NO host ports exposed)
+  #    Lightweight host hardware telemetry daemon (~12-15 MB footprint)
+  # ----------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: cloudmonitor-node-exporter
+    restart: unless-stopped
+    expose:
+      - "9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - cloudmonitor-net
+
+  # ----------------------------------------------------------------------------
+  # 6. Prometheus Alertmanager (Private — NO host ports exposed)
+  #    Lightweight alert deduplication and dispatch engine (~12-15 MB footprint)
+  # ----------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: cloudmonitor-alertmanager
+    restart: unless-stopped
+    expose:
+      - "9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - cloudmonitor-net
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # Optional: Automated TLS Reverse Proxy (Let's Encrypt for custom domains)
+  # Active only when passing: --profile tls
+  # ----------------------------------------------------------------------------
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    container_name: cloudmonitor-caddy
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - cloudmonitor-net
+    depends_on:
+      - frontend
+      - backend
+
+networks:
+  cloudmonitor-net:
+    driver: bridge
+    name: cloudmonitor-network
+
+volumes:
+  postgres_data:
+    name: cloudmonitor-prod_postgres_data
+  prometheus_data:
+    name: cloudmonitor-prod_prometheus_data
+  alertmanager_data:
+    name: cloudmonitor-prod_alertmanager_data
+  caddy_data:
+    name: cloudmonitor-prod_caddy_data
+  caddy_config:
+    name: cloudmonitor-prod_caddy_config

@@ -1,12 +1,33 @@
 name: cloudmonitor
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloudmonitor-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-cloudmonitor}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-cloudmonitor_secret}
+      - POSTGRES_DB=${POSTGRES_DB:-cloudmonitor}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cloudmonitor-net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   prometheus:
     image: prom/prometheus:v2.54.1
     container_name: cloudmonitor-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/alerts:/etc/prometheus/alerts:ro
@@ -31,7 +52,7 @@ services:
     container_name: cloudmonitor-node-exporter
     restart: unless-stopped
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -50,7 +71,7 @@ services:
     restart: unless-stopped
     privileged: true
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -72,11 +93,18 @@ services:
     container_name: cloudmonitor-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - APP_NAME=CloudMonitor-API
       - APP_ENV=development
       - PORT=8000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudmonitor}:${POSTGRES_PASSWORD:-cloudmonitor_secret}@postgres:5432/${POSTGRES_DB:-cloudmonitor}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-cloudmonitor_dev_jwt_secret_key_change_in_prod_at_least_32_chars}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=60
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - cloudmonitor-net
     healthcheck:
@@ -91,14 +119,14 @@ services:
     container_name: cloudmonitor-grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
       - GF_USERS_ALLOW_SIGN_UP=false
     networks:
       - cloudmonitor-net
@@ -114,7 +142,7 @@ services:
     container_name: cloudmonitor-alertmanager
     restart: unless-stopped
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
     networks:
       - cloudmonitor-net
     volumes:
@@ -139,9 +167,9 @@ services:
     container_name: cloudmonitor-frontend
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:80"
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
     networks:
       - cloudmonitor-net
 
@@ -151,6 +179,7 @@ networks:
     name: cloudmonitor-network
 
 volumes:
+  postgres_data:
   prometheus_data:
   grafana_data:
   alertmanager_data:
