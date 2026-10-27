@@ -479,7 +479,7 @@ BSc CSDA students at IIT Patna, fifth semester. This is a collaborative Cloud Co
 
 ## 17. Related project documents
 
-- [README](README.md)
+- [README](../README.md)
 - [Backend README](../backend/README.md)
 - [Agent README](../agent/README.md)
 - [AWS deployment guide](DEPLOYMENT_AWS.md)
