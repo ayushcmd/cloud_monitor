@@ -45,9 +45,9 @@ jobs:
         env:
           APP_ENV: "test"
           JWT_SECRET_KEY: "ci_test_secret_key_at_least_32_characters_long_for_tests"
-          DATABASE_URL: "sqlite:///:memory:"
+          DATABASE_URL: "sqlite:///./test.db"
         run: |
-          PYTHONPATH=. pytest -v --tb=short tests/ agent/tests/
+          PYTHONPATH=backend:. pytest -v --tb=short tests/ agent/tests/
 
   frontend-build:
     name: Frontend Build & Asset Verification
