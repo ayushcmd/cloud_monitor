@@ -95,7 +95,8 @@ def list_user_agents(
         current_status = ag.status
         if not ag.is_revoked:
             if ag.last_heartbeat:
-                delta_sec = (now - ag.last_heartbeat).total_seconds()
+                hb = ag.last_heartbeat if ag.last_heartbeat.tzinfo else ag.last_heartbeat.replace(tzinfo=timezone.utc)
+                delta_sec = (now - hb).total_seconds()
                 if delta_sec > 90:
                     current_status = "offline"
                 else:
@@ -169,7 +170,8 @@ def get_connection_status(
         stage = "revoked"
         status_val = "revoked"
     elif container_count > 0 and agent.last_heartbeat:
-        delta_sec = (now - agent.last_heartbeat).total_seconds()
+        hb = agent.last_heartbeat if agent.last_heartbeat.tzinfo else agent.last_heartbeat.replace(tzinfo=timezone.utc)
+        delta_sec = (now - hb).total_seconds()
         if delta_sec <= 90:
             stage = "connected"
             status_val = "online"
