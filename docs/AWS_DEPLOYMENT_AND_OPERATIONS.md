@@ -414,7 +414,7 @@ The current Alertmanager receiver config has empty webhook lists. Configure and 
 
 ## 16. Related documents
 
-- [README](README.md)
+- [README](../README.md)
 - [Project Build & Architecture](PROJECT_BUILD_AND_ARCHITECTURE.md)
 - [Existing AWS deployment guide](DEPLOYMENT_AWS.md)
 - [CI/CD setup guide](CICD_SETUP_GUIDE.md)
