@@ -24,6 +24,9 @@ permissions:
 jobs:
   deploy:
     name: Deploy to AWS EC2
+    environment:
+      name: production
+      url: http://${{ secrets.EC2_HOST }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -40,24 +43,24 @@ jobs:
         run: |
           MISSING=0
           if [ -z "$EC2_HOST" ]; then
-            echo "::error::Secret EC2_HOST is not configured in repository secrets."
+            echo "::error::Secret EC2_HOST is not configured in repository or environment secrets."
             MISSING=1
           fi
           if [ -z "$EC2_USER" ]; then
-            echo "::error::Secret EC2_USER is not configured in repository secrets."
+            echo "::error::Secret EC2_USER is not configured in repository or environment secrets."
             MISSING=1
           fi
           if [ -z "$EC2_KEY" ]; then
-            echo "::error::Secret EC2_SSH_PRIVATE_KEY is not configured in repository secrets."
+            echo "::error::Secret EC2_SSH_PRIVATE_KEY is not configured in repository or environment secrets."
             MISSING=1
           fi
           if [ -z "$EC2_KNOWN_HOSTS" ]; then
-            echo "::error::Secret EC2_SSH_KNOWN_HOSTS is not configured in repository secrets. Strict SSH host-key verification requires a verified known_hosts entry."
+            echo "::error::Secret EC2_SSH_KNOWN_HOSTS is not configured in repository or environment secrets. Strict SSH host-key verification requires a verified known_hosts entry."
             MISSING=1
           fi
 
           if [ "$MISSING" -ne 0 ]; then
-            echo "::error::Deployment prerequisites missing. Configure the required secrets in GitHub: Settings -> Secrets and variables -> Actions."
+            echo "::error::Deployment prerequisites missing. Configure the required secrets in GitHub: Settings -> Secrets and variables -> Actions (Repository secrets or Environment 'production' secrets)."
             exit 1
           fi
           echo "All required deployment secrets are present."
@@ -70,15 +73,15 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Write private key with strict permissions
-          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          # Write private key with strict permissions, removing any Windows CRLF
+          printf "%s\n" "$EC2_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          # Write independently verified known_hosts entry
-          echo "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Write independently verified known_hosts entry, removing any Windows CRLF
+          printf "%s\n" "$EC2_SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-          # Configure SSH client with strict host key checking enabled
+          # Configure SSH client with strict host key checking enabled and keep-alive
           cat << 'EOF' > ~/.ssh/config
           Host ec2-target
             HostName ${{ secrets.EC2_HOST }}
@@ -87,6 +90,8 @@ jobs:
             StrictHostKeyChecking yes
             UserKnownHostsFile ~/.ssh/known_hosts
             ConnectTimeout 15
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
             BatchMode yes
           EOF
           chmod 600 ~/.ssh/config
@@ -117,9 +122,10 @@ jobs:
 
             # 2. Update code from main branch if git repository is initialized
             if [ -d .git ]; then
+              git config --global --add safe.directory "$DEPLOY_DIR" || true
               git fetch origin main
-              git checkout main
-              git pull --ff-only origin main
+              git checkout -f main
+              git reset --hard origin/main
             fi
 
             # 3. Pull required external images
@@ -131,6 +137,10 @@ jobs:
             # 5. Bring up services idempotently (preserves postgres_data volume)
             sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
+            # 6. Verify container status on host
+            echo "Verifying running container states on host..."
+            sudo docker compose -f docker-compose.prod.yml ps
+
             echo "Stack deployment commands completed successfully."
           EOF
 
@@ -139,55 +149,86 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
           echo "Performing post-deployment health check against EC2 entrypoint..."
-          HEALTH_URL="http://${EC2_HOST}/health"
+          FRONTEND_URL="http://${EC2_HOST}/"
+          BACKEND_HEALTH_URL="http://${EC2_HOST}/health"
           TARGETS_URL="http://${EC2_HOST}/prom/api/v1/targets"
 
-          # 1. Bounded health check for FastAPI backend & Nginx reverse proxy
-          echo "Checking backend health at $HEALTH_URL..."
-          HEALTH_SUCCESS=false
+          # 1. Bounded health check for Frontend SPA public entrypoint
+          echo "Checking frontend public endpoint at $FRONTEND_URL..."
+          FRONTEND_SUCCESS=false
           for i in {1..12}; do
-            STATUS=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+            STATUS=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "$FRONTEND_URL" || true)
             if [ "$STATUS" = "200" ]; then
-              echo "Backend health probe succeeded (HTTP 200) on attempt $i."
-              HEALTH_SUCCESS=true
+              echo "Frontend public endpoint responded with HTTP 200 on attempt $i."
+              FRONTEND_SUCCESS=true
               break
             fi
-            echo "Waiting for backend health probe (attempt $i/12, status: $STATUS)..."
+            echo "Waiting for frontend entrypoint (attempt $i/12, status: $STATUS)..."
             sleep 5
           done
 
-          if [ "$HEALTH_SUCCESS" != "true" ]; then
-            echo "::error::Backend health check failed at $HEALTH_URL after 12 attempts."
+          if [ "$FRONTEND_SUCCESS" != "true" ]; then
+            echo "::error::Frontend public endpoint check failed at $FRONTEND_URL after 12 attempts."
             exit 1
           fi
 
-          # 2. Bounded verification for Prometheus scrape targets
+          # 2. Bounded health check for FastAPI backend & Nginx reverse proxy
+          echo "Checking backend health at $BACKEND_HEALTH_URL..."
+          BACKEND_SUCCESS=false
+          for i in {1..12}; do
+            BACKEND_RES=$(curl -s -m 5 "$BACKEND_HEALTH_URL" || true)
+            if echo "$BACKEND_RES" | grep -q '"status":"healthy"'; then
+              echo "Backend health check succeeded on attempt $i: $BACKEND_RES"
+              BACKEND_SUCCESS=true
+              break
+            fi
+            echo "Waiting for backend health probe (attempt $i/12)..."
+            sleep 5
+          done
+
+          if [ "$BACKEND_SUCCESS" != "true" ]; then
+            echo "::error::Backend health check failed at $BACKEND_HEALTH_URL after 12 attempts."
+            exit 1
+          fi
+
+          # 3 & 4. Bounded check for Prometheus scrape targets API and all required targets UP
           echo "Validating Prometheus scrape targets proxy at $TARGETS_URL..."
           TARGETS_SUCCESS=false
-          for i in {1..6}; do
+          EXPECTED_TARGETS=("alertmanager" "cloudmonitor-backend" "node-exporter" "prometheus")
+
+          for i in {1..10}; do
             TARGETS_RES=$(curl -s -m 5 "$TARGETS_URL" || true)
-            if echo "$TARGETS_RES" | grep -q '"status":"success"'; then
+            if echo "$TARGETS_RES" | jq -e '.status == "success"' >/dev/null 2>&1; then
               DOWN_TARGETS=$(echo "$TARGETS_RES" | jq -r '[.data.activeTargets[] | select(.health != "up") | .scrapePool] | join(", ")' 2>/dev/null || true)
               ACTIVE_COUNT=$(echo "$TARGETS_RES" | jq -r '.data.activeTargets | length' 2>/dev/null || echo "0")
 
-              if [ "$ACTIVE_COUNT" -gt 0 ] && [ -z "$DOWN_TARGETS" ]; then
-                echo "Prometheus targets check succeeded: $ACTIVE_COUNT targets active and all UP."
+              MISSING_TARGETS=()
+              for target in "${EXPECTED_TARGETS[@]}"; do
+                FOUND=$(echo "$TARGETS_RES" | jq -r --arg t "$target" '[.data.activeTargets[] | select(.scrapePool == $t)] | length' 2>/dev/null || echo "0")
+                if [ "$FOUND" -eq 0 ]; then
+                  MISSING_TARGETS+=("$target")
+                fi
+              done
+
+              if [ "$ACTIVE_COUNT" -ge 4 ] && [ -z "$DOWN_TARGETS" ] && [ ${#MISSING_TARGETS[@]} -eq 0 ]; then
+                echo "Prometheus targets check succeeded on attempt $i: $ACTIVE_COUNT targets active and all UP (${EXPECTED_TARGETS[*]})."
                 TARGETS_SUCCESS=true
                 break
-              elif [ -n "$DOWN_TARGETS" ]; then
-                echo "::warning::Unhealthy targets detected: $DOWN_TARGETS (attempt $i/6)..."
+              else
+                [ -n "$DOWN_TARGETS" ] && echo "::warning::Unhealthy targets detected: $DOWN_TARGETS (attempt $i/10)..."
+                [ ${#MISSING_TARGETS[@]} -gt 0 ] && echo "::warning::Missing expected targets: ${MISSING_TARGETS[*]} (attempt $i/10)..."
               fi
             fi
-            echo "Waiting for Prometheus target discovery (attempt $i/6)..."
+            echo "Waiting for Prometheus target discovery (attempt $i/10)..."
             sleep 5
           done
 
           if [ "$TARGETS_SUCCESS" != "true" ]; then
-            echo "::error::Prometheus scrape targets verification failed at $TARGETS_URL."
+            echo "::error::Prometheus scrape targets verification failed at $TARGETS_URL after 10 attempts."
             exit 1
           fi
 
-          echo "All production health and monitoring checks passed."
+          echo "All production health, frontend, backend, and monitoring checks passed."
 
       - name: Clean up SSH Temporary Credentials
         if: always()
