@@ -45,16 +45,40 @@ The pipeline consists of two GitHub Actions workflow files located in `.github/w
 To enable automated deployment to your AWS EC2 instance, configure the following secrets in GitHub:
 
 1. Navigate to: **GitHub Repository &rarr; Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret**
-2. Add the following secrets:
+2. Add the following four secrets:
 
-| Secret Name | Description | Example / Format |
+| Secret Name | Description | Example / Value |
 | :--- | :--- | :--- |
 | `EC2_HOST` | Public IPv4 address or DNS of your EC2 instance | `3.25.150.231` |
 | `EC2_USER` | SSH username for the Ubuntu instance | `ubuntu` |
 | `EC2_SSH_PRIVATE_KEY` | Entire content of your private SSH key (`cloudmonitor-key.pem`) | `-----BEGIN RSA PRIVATE KEY----- ... -----END RSA PRIVATE KEY-----` |
+| `EC2_SSH_KNOWN_HOSTS` | Verified public host key line for the EC2 server (enables strict SSH host verification) | `3.25.150.231 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEBsqrR6gAY2i/qk4kcm1Nycvq7I34j3nyUDEbM4uJpR` |
 
 > [!IMPORTANT]
-> The private key should be pasted in full, including the `-----BEGIN ...-----` and `-----END ...-----` lines. GitHub Actions masks secret values in all workflow logs automatically.
+> - **EC2_SSH_PRIVATE_KEY**: Paste the private key in full, including the `-----BEGIN ...-----` and `-----END ...-----` headers. Ensure there are no accidental trailing spaces.
+> - **EC2_SSH_KNOWN_HOSTS**: Unlike insecure configurations that set `StrictHostKeyChecking no`, our pipeline strictly validates the host key against `EC2_SSH_KNOWN_HOSTS` before sending any credentials. This prevents Man-in-the-Middle (MITM) attacks.
+
+### How to Verify the EC2 Host Key Fingerprint
+You can cryptographically verify that the host key matches your AWS EC2 instance before adding it:
+1. Open the **AWS EC2 Management Console**.
+2. Go to **Instances**, select instance `3.25.150.231`.
+3. Click **Actions &rarr; Monitor and troubleshoot &rarr; Get system log**.
+4. Scroll to the SSH key generation output generated at first boot:
+   ```text
+   ec2: -----BEGIN SSH HOST KEY FINGERPRINTS-----
+   ec2: 256 SHA256:YnxBgREbLPFkl1UYCgSj+AdjO2VDvgEC+HE5SYyutm8 root@ip-172-31-0-221 (ED25519)
+   ec2: 256 SHA256:eX9Qj+sNVfqjyE6p5cvICC3g1UjN8zHQ6NOsf6+ko7g root@ip-172-31-0-221 (ECDSA)
+   ec2: -----END SSH HOST KEY FINGERPRINTS-----
+   ```
+5. Confirm that the ED25519 fingerprint matches `SHA256:YnxBgREbLPFkl1UYCgSj+AdjO2VDvgEC+HE5SYyutm8`.
+
+### AWS Security Group Requirements
+- For GitHub-hosted runners to execute deployments, the EC2 instance's Security Group must allow inbound TCP traffic on **Port 22 (SSH)**.
+- If using standard GitHub-hosted runners without self-hosted gateway runners, port 22 inbound source should be set to `0.0.0.0/0` (or the GitHub Actions IP ranges from `https://api.github.com/meta`).
+
+### Production `.env` File Guard
+- The CD pipeline requires that `/home/ubuntu/cloud_monitor/.env` already exists on the EC2 host.
+- It will **never** automatically copy `.env.production.example` over `.env`, and will halt deployment immediately if `.env` is absent. This protects production secrets, database credentials, and avoids accidental data corruption.
 
 ---
 

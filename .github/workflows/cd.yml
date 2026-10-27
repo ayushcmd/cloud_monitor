@@ -36,41 +36,64 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
+          MISSING=0
           if [ -z "$EC2_HOST" ]; then
             echo "::error::Secret EC2_HOST is not configured in repository secrets."
-            exit 1
+            MISSING=1
           fi
           if [ -z "$EC2_USER" ]; then
             echo "::error::Secret EC2_USER is not configured in repository secrets."
-            exit 1
+            MISSING=1
           fi
           if [ -z "$EC2_KEY" ]; then
             echo "::error::Secret EC2_SSH_PRIVATE_KEY is not configured in repository secrets."
+            MISSING=1
+          fi
+          if [ -z "$EC2_KNOWN_HOSTS" ]; then
+            echo "::error::Secret EC2_SSH_KNOWN_HOSTS is not configured in repository secrets. Strict SSH host-key verification requires a verified known_hosts entry."
+            MISSING=1
+          fi
+
+          if [ "$MISSING" -ne 0 ]; then
+            echo "::error::Deployment prerequisites missing. Configure the required secrets in GitHub: Settings -> Secrets and variables -> Actions."
             exit 1
           fi
           echo "All required deployment secrets are present."
 
-      - name: Set up SSH Private Key
+      - name: Set up SSH Private Key and Known Hosts
         env:
           EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Write private key with strict permissions
           echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+          # Write independently verified known_hosts entry
+          echo "$EC2_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          # Configure SSH client with strict host key checking enabled
           cat << 'EOF' > ~/.ssh/config
           Host ec2-target
             HostName ${{ secrets.EC2_HOST }}
             User ${{ secrets.EC2_USER }}
             IdentityFile ~/.ssh/deploy_key
-            StrictHostKeyChecking no
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
             ConnectTimeout 15
             BatchMode yes
           EOF
+          chmod 600 ~/.ssh/config
 
-      - name: Verify SSH Connectivity to EC2
+      - name: Verify SSH Connectivity with Host Verification
         run: |
-          echo "Verifying secure SSH connectivity to EC2 host..."
+          echo "Verifying secure SSH connectivity with strict host-key verification..."
           ssh ec2-target "uptime && docker --version"
 
       - name: Deploy Application Stack via Docker Compose
@@ -79,20 +102,24 @@ jobs:
           ssh ec2-target "bash -s" << 'EOF'
             set -euo pipefail
             DEPLOY_DIR="/home/ubuntu/cloud_monitor"
-            mkdir -p "$DEPLOY_DIR"
+
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "::error::Target directory $DEPLOY_DIR does not exist on host."
+              exit 1
+            fi
             cd "$DEPLOY_DIR"
 
-            # 1. Update repository if git is configured, otherwise maintain working directory
-            if [ -d .git ]; then
-              git fetch origin
-              git checkout main || git checkout master
-              git pull --ff-only
+            # 1. Protect production configuration (never automatically create or overwrite)
+            if [ ! -f .env ]; then
+              echo "::error::Production environment file ($DEPLOY_DIR/.env) does not exist! Deployment stopped to protect database and secrets."
+              exit 1
             fi
 
-            # 2. Verify production .env exists (never overwritten or exposed)
-            if [ ! -f .env ]; then
-              echo "::warning::Production .env not found. Initializing from .env.production.example (manual review required)."
-              cp .env.production.example .env
+            # 2. Update code from main branch if git repository is initialized
+            if [ -d .git ]; then
+              git fetch origin main
+              git checkout main
+              git pull --ff-only origin main
             fi
 
             # 3. Pull required external images
@@ -113,34 +140,57 @@ jobs:
         run: |
           echo "Performing post-deployment health check against EC2 entrypoint..."
           HEALTH_URL="http://${EC2_HOST}/health"
-          PROMETHEUS_TARGETS_URL="http://${EC2_HOST}/prom/api/v1/targets"
+          TARGETS_URL="http://${EC2_HOST}/prom/api/v1/targets"
 
-          # Wait for Nginx and backend to be fully responsive
+          # 1. Bounded health check for FastAPI backend & Nginx reverse proxy
+          echo "Checking backend health at $HEALTH_URL..."
+          HEALTH_SUCCESS=false
           for i in {1..12}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
+            STATUS=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "$HEALTH_URL" || true)
             if [ "$STATUS" = "200" ]; then
-              echo "Health check succeeded: $HEALTH_URL returned HTTP 200"
+              echo "Backend health probe succeeded (HTTP 200) on attempt $i."
+              HEALTH_SUCCESS=true
               break
             fi
             echo "Waiting for backend health probe (attempt $i/12, status: $STATUS)..."
             sleep 5
           done
 
-          if [ "$STATUS" != "200" ]; then
-            echo "::error::Backend health check failed at $HEALTH_URL"
+          if [ "$HEALTH_SUCCESS" != "true" ]; then
+            echo "::error::Backend health check failed at $HEALTH_URL after 12 attempts."
             exit 1
           fi
 
-          echo "Validating Prometheus scrape targets proxy..."
-          TARGETS_RES=$(curl -s "$PROMETHEUS_TARGETS_URL" || true)
-          if echo "$TARGETS_RES" | grep -q '"status":"success"'; then
-            echo "Prometheus targets check succeeded."
-          else
-            echo "::warning::Prometheus targets endpoint returned non-success response."
+          # 2. Bounded verification for Prometheus scrape targets
+          echo "Validating Prometheus scrape targets proxy at $TARGETS_URL..."
+          TARGETS_SUCCESS=false
+          for i in {1..6}; do
+            TARGETS_RES=$(curl -s -m 5 "$TARGETS_URL" || true)
+            if echo "$TARGETS_RES" | grep -q '"status":"success"'; then
+              DOWN_TARGETS=$(echo "$TARGETS_RES" | jq -r '[.data.activeTargets[] | select(.health != "up") | .scrapePool] | join(", ")' 2>/dev/null || true)
+              ACTIVE_COUNT=$(echo "$TARGETS_RES" | jq -r '.data.activeTargets | length' 2>/dev/null || echo "0")
+
+              if [ "$ACTIVE_COUNT" -gt 0 ] && [ -z "$DOWN_TARGETS" ]; then
+                echo "Prometheus targets check succeeded: $ACTIVE_COUNT targets active and all UP."
+                TARGETS_SUCCESS=true
+                break
+              elif [ -n "$DOWN_TARGETS" ]; then
+                echo "::warning::Unhealthy targets detected: $DOWN_TARGETS (attempt $i/6)..."
+              fi
+            fi
+            echo "Waiting for Prometheus target discovery (attempt $i/6)..."
+            sleep 5
+          done
+
+          if [ "$TARGETS_SUCCESS" != "true" ]; then
+            echo "::error::Prometheus scrape targets verification failed at $TARGETS_URL."
+            exit 1
           fi
 
-      - name: Clean up SSH Private Key
+          echo "All production health and monitoring checks passed."
+
+      - name: Clean up SSH Temporary Credentials
         if: always()
         run: |
-          rm -f ~/.ssh/deploy_key
-          echo "SSH credentials removed from runner environment."
+          rm -f ~/.ssh/deploy_key ~/.ssh/config ~/.ssh/known_hosts
+          echo "SSH temporary credentials and host keys removed from runner environment."
