@@ -416,11 +416,11 @@ The current Alertmanager receiver config has empty webhook lists. Configure and 
 
 - [README](README.md)
 - [Project Build & Architecture](PROJECT_BUILD_AND_ARCHITECTURE.md)
-- [Existing AWS deployment guide](docs/DEPLOYMENT_AWS.md)
-- [CI/CD setup guide](docs/CICD_SETUP_GUIDE.md)
-- [Production Compose](docker-compose.prod.yml)
-- [Local Compose](docker-compose.yml)
-- [Caddy configuration](Caddyfile)
+- [Existing AWS deployment guide](DEPLOYMENT_AWS.md)
+- [CI/CD setup guide](CICD_SETUP_GUIDE.md)
+- [Production Compose](../docker-compose.prod.yml)
+- [Local Compose](../docker-compose.yml)
+- [Caddy configuration](../Caddyfile)
 - [Issue #9 — Systems Manager migration](https://github.com/ayushcmd/cloud_monitor/issues/9)
 
 ## 17. Team
