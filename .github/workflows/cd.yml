@@ -24,9 +24,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy to AWS EC2
-    environment:
-      name: production
-      url: http://${{ secrets.EC2_HOST }}
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
