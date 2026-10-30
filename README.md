@@ -5,7 +5,7 @@ A self-hosted observability platform for monitoring Docker hosts and containers.
 CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persistence, a lightweight Docker monitoring agent, and a Prometheus-based monitoring stack. It was built as the Cloud Computing mini project for the BSc Computer Science and Data Analytics program (5th semester) at IIT Patna, and demonstrates cloud-hosted application deployment, container telemetry collection, metrics-based monitoring, and operational visibility.
 
 <details>
-  <summary><strong> View CloudMonitor Team Project Presentation (PPT)</strong></summary>
+  <summary><strong> View CloudMonitor (PPT) & Architecture </strong></summary>
 
   <br>
 
@@ -17,8 +17,15 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 
   <p>
     <a href="docs/CloudMonitor_Cloud_Computing_Mini_Project_.pptx">
-      📥 View / Download Project PPT
+      📥 View / Download  PPT
     </a>
+    
+  </p>
+  <p>
+    <a href="docs/DETAILED_SYSTEM_AND_AWS_ARCHITECTURE.md">
+      📥 View Detailed Architecture
+    </a>
+    
   </p>
 
 </details>

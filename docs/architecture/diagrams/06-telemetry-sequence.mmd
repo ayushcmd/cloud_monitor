@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    participant DockerEngine as Docker Engine Daemon (/var/run/docker.sock)
+    participant Collector as Agent MetricsCollector (collector.py)
+    participant Sender as Agent MetricsSender (sender.py)
+    participant Nginx as Edge Nginx (Port 80)
+    participant Backend as FastAPI Backend (/api/v1/metrics/ingest)
+    participant DB as PostgreSQL (container_metrics table)
+    participant Frontend as React Dashboard (Overview / Containers)
+
+    loop Every 15 seconds (AGENT_POLL_INTERVAL)
+        Collector->>DockerEngine: GET containers.list() via local Unix socket / IPC
+        DockerEngine-->>Collector: Container list & inspect attributes
+        Collector->>DockerEngine: GET container.stats(stream=False)
+        DockerEngine-->>Collector: CPU total/system usage & memory inactive_file bytes
+        Collector->>Collector: calculate_cpu_percent(stats, precpu_stats)
+        Collector->>Collector: calculate_memory_usage(stats)
+        Collector->>Sender: Submits normalized container metric snapshots (max 100 items)
+        Sender->>Nginx: HTTP POST /api/v1/metrics/ingest<br/>Header: X-Agent-Key: <key><br/>Payload: {timestamp, containers: [...]}
+        Nginx->>Backend: Proxy POST /api/v1/metrics/ingest
+        Backend->>Backend: Authenticates agent via SHA-256 hash lookup
+        Backend->>DB: UPDATE agents SET last_heartbeat=now(), status='online'
+        loop For each container in payload
+            Backend->>DB: UPSERT INTO container_metrics (cpu_percent, memory_bytes, state, restart_count, recorded_at)
+        end
+        DB-->>Backend: Commit transaction
+        Backend-->>Nginx: HTTP 200 OK {status: 'ok', ingested_count: N}
+        Nginx-->>Sender: HTTP 200 OK
+    end
+
+    opt Dashboard Refresh (Operator view)
+        Frontend->>Nginx: GET /api/v1/metrics/containers (Header: Authorization: Bearer <JWT>)
+        Nginx->>Backend: Proxy GET /api/v1/metrics/containers
+        Backend->>DB: SELECT * FROM container_metrics WHERE user_id=:uid
+        DB-->>Backend: Active container snapshots
+        Backend-->>Frontend: HTTP 200 OK [JSON container metrics]
+        Frontend->>Frontend: Re-renders container telemetry table & resource bars
+    end

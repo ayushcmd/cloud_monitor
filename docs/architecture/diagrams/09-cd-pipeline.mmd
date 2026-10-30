@@ -1,0 +1,40 @@
+flowchart TD
+    subgraph TriggerCD["Trigger Event (.github/workflows/cd.yml)"]
+        PushMain["Push to branch: main (e.g. PR Merge)"]
+        ManualDispatch["workflow_dispatch (Inputs: target_env, diagnostic_only)"]
+    end
+
+    subgraph CDJobs["GitHub Actions Runner Jobs"]
+        subgraph DiagBranch["Diagnostic Branch (if inputs.diagnostic_only == true)"]
+            d_ip["Discover Runner Egress IP<br/>(api.ipify.org / ifconfig.me)"]
+            d_tcp["Probe Port 22 Reachability<br/>(nc -z -w 5 $EC2_HOST 22)"]
+            d_ip --> d_tcp
+        end
+
+        subgraph DeployJob["Deploy Job: deploy (if !diagnostic_only)"]
+            s1["1. Validate Deployment Secrets<br/>(EC2_HOST, EC2_USER, EC2_SSH_PRIVATE_KEY, EC2_SSH_KNOWN_HOSTS)"]
+            s2["2. Set up SSH Key & Known Hosts<br/>(StrictHostKeyChecking yes, chmod 600)"]
+            s3["3. Verify SSH Connectivity<br/>(ssh ec2-target 'uptime && docker --version')"]
+            s4["4. Deploy Application Stack via SSH<br/>(cd /home/ubuntu/cloud_monitor<br/>git reset --hard origin/main<br/>docker compose build & up -d)"]
+            s5["5. Bounded Health Probes<br/>- Frontend HTTP 200 (12 retries)<br/>- Backend /health HTTP 200 (12 retries)<br/>- Prometheus 4 targets all UP (10 retries)"]
+            s6["6. Clean up SSH Temporary Credentials<br/>(rm -f ~/.ssh/deploy_key ~/.ssh/known_hosts)"]
+
+            s1 -->|Missing Secrets| err_sec["Fail Safe: Stop Deployment"]
+            s1 -->|Secrets Present| s2
+            s2 --> s3
+            s3 -->|Port 22 Timeout / SG Blocked| err_ssh["Fail Safe: Connection Timed Out"]
+            s3 -->|SSH Success| s4
+            s4 --> s5
+            s5 -->|Probes Succeed| dep_success["Deployment Completed Successfully"]
+            s5 -->|Probe Timeout / Degraded| err_health["Fail: Non-200 / Unhealthy Targets"]
+            s1 -.->|"always()"| s6
+            s2 -.->|"always()"| s6
+            s3 -.->|"always()"| s6
+            s4 -.->|"always()"| s6
+            s5 -.->|"always()"| s6
+        end
+    end
+
+    ManualDispatch -->|diagnostic_only == true| DiagBranch
+    ManualDispatch -->|diagnostic_only == false| DeployJob
+    PushMain --> DeployJob

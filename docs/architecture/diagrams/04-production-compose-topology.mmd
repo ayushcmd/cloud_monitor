@@ -1,0 +1,41 @@
+flowchart TB
+    subgraph PublicInternet["Public Internet Ingress (AWS IPv4: 3.25.150.231)"]
+        HTTP_Port["Port 80 (TCP Ingress: 0.0.0.0/0)"]
+        HTTPS_Port["Port 443 (Optional Profile: --profile tls)"]
+    end
+
+    subgraph ProductionEC2["AWS EC2 Host (Ubuntu 24.04 / 1 GB RAM / t3.micro)"]
+        subgraph ProdDockerNet["Docker Network: cloudmonitor-network (Internal Bridge)"]
+            fe["cloudmonitor-frontend<br/>(Nginx 1.31.8 / Static React Build)<br/>RAM: ~15 MB"]
+            be["cloudmonitor-backend<br/>(FastAPI / Python 3.12)<br/>RAM: ~85 MB (NO host port exposed)"]
+            pg["cloudmonitor-postgres<br/>(PostgreSQL 16 Alpine)<br/>RAM: ~60 MB (NO host port exposed)"]
+            prom["cloudmonitor-prometheus<br/>(Prometheus TSDB v2.54.1)<br/>RAM: ~40 MB (NO host port exposed)"]
+            ne["cloudmonitor-node-exporter<br/>(prom/node-exporter:v1.8.2)<br/>RAM: ~15 MB (NO host port exposed)"]
+            am["cloudmonitor-alertmanager<br/>(prom/alertmanager:v0.27.0)<br/>RAM: ~15 MB (NO host port exposed)"]
+            caddy["cloudmonitor-caddy (Optional TLS)<br/>(Caddy 2 Alpine)<br/>Profile: ['tls']"]
+        end
+
+        subgraph PersistentVolumes["Host Persistent Named Volumes"]
+            v_pg["cloudmonitor-prod_postgres_data<br/>(/var/lib/postgresql/data)"]
+            v_prom["cloudmonitor-prod_prometheus_data<br/>(/prometheus - retention: 2d)"]
+            v_am["cloudmonitor-prod_alertmanager_data<br/>(/alertmanager)"]
+            v_caddy["cloudmonitor-prod_caddy_data"]
+        end
+    end
+
+    HTTP_Port -->|"Maps 80:80"| fe
+    HTTPS_Port -.->|"Maps 443:443 (when TLS profile active)"| caddy
+
+    fe -->|proxy_pass http://backend:8000| be
+    fe -->|proxy_pass http://prometheus:9090| prom
+    be -->|SQL TCP :5432| pg
+
+    prom -->|Scrapes http://backend:8000/metrics| be
+    prom -->|Scrapes http://node-exporter:9100/metrics| ne
+    prom -->|Scrapes http://alertmanager:9093/metrics| am
+    prom -->|Dispatches Alerts| am
+
+    pg --- v_pg
+    prom --- v_prom
+    am --- v_am
+    caddy -.-> v_caddy
