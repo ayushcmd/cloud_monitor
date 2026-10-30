@@ -1,0 +1,36 @@
+flowchart TD
+    subgraph AppLifecycle["Application & Migration Lifecycle"]
+        CodeModels["SQLAlchemy Database Models<br/>(backend/app/models/*.py)"]
+        AlembicMigrations["Alembic Version History<br/>- 001_create_users_table.py<br/>- 002_create_agents_and_metrics.py<br/>- 003_add_os_type_and_agent_version.py"]
+        AlembicRunner["Alembic Migration Upgrade<br/>(alembic upgrade head)"]
+
+        CodeModels --> AlembicMigrations --> AlembicRunner
+    end
+
+    subgraph RDBMS["PostgreSQL 16 Alpine Database"]
+        subgraph Tables["Relational Tables"]
+            t_users["users<br/>• id (PK, serial)<br/>• email (unique, index)<br/>• password_hash<br/>• created_at (timestamptz)"]
+            t_agents["agents<br/>• id (PK, serial)<br/>• user_id (FK -> users.id)<br/>• name, os_type, status<br/>• agent_key_hash (unique, index)<br/>• last_heartbeat (timestamptz)"]
+            t_metrics["container_metrics<br/>• id (PK, serial)<br/>• agent_id (FK -> agents.id)<br/>• user_id (FK -> users.id)<br/>• container_id, name, state<br/>• cpu_percent, memory_bytes<br/>• recorded_at (timestamptz)"]
+        end
+
+        t_users -->|1:N CASCADE| t_agents
+        t_users -->|1:N CASCADE| t_metrics
+        t_agents -->|1:N CASCADE| t_metrics
+    end
+
+    subgraph StorageEngine["Persistence & Volume Boundary"]
+        NamedVol["Docker Named Volume:<br/>cloudmonitor-prod_postgres_data<br/>(/var/lib/postgresql/data)"]
+        EBS["Host EBS gp3 Volume:<br/>/dev/sda1 (20 GiB)"]
+        RDBMS --- NamedVol
+        NamedVol --- EBS
+    end
+
+    subgraph BackupGap["Backup & Disaster Recovery Status"]
+        AutomatedBackup["Automated Daily Snapshot / pg_dump: PLANNED / NOT IMPLEMENTED"]
+        DataRisk["Volume Destruction Warning: 'docker compose down -v' destroys database!"]
+    end
+
+    AlembicRunner --> RDBMS
+    NamedVol -.-> DataRisk
+    NamedVol -.-> AutomatedBackup

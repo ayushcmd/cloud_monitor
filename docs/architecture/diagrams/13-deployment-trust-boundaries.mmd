@@ -1,0 +1,33 @@
+flowchart TD
+    subgraph TrustZoneUntrusted["Untrusted Public Network"]
+        BrowserClient["Browser Client / Operator<br/>(Transmits Passwords / User JWTs)"]
+        ExternalAgent["Remote Docker Agent<br/>(Transmits X-Agent-Key / Telemetry)"]
+        GHAgent["GitHub Actions Runner<br/>(Holds Deploy SSH Private Key)"]
+    end
+
+    subgraph TrustBoundaryIngress["Ingress Trust Boundary (AWS Security Group & Nginx)"]
+        SGRules["AWS Security Group Filter<br/>(Port 80/443 Open; Port 22 Restricted)"]
+        NginxEdge["Nginx Reverse Proxy<br/>• Terminates Ingress HTTP<br/>• Serves Static SPA<br/>• Routes /api/* to backend:8000<br/>• Routes /prom/* to prometheus:9090"]
+    end
+
+    subgraph TrustZoneInternal["Internal Trusted Microsegment (Docker Network: cloudmonitor-network)"]
+        FastAPI["FastAPI Backend<br/>• Validates JWTs & Hashes<br/>• Scopes Queries by user_id<br/>• NO HOST PORT EXPOSED"]
+        PostgreSQL["PostgreSQL Database<br/>• Private to Docker Network<br/>• NO HOST PORT EXPOSED<br/>• Password-Protected"]
+        PrometheusEngine["Prometheus & Exporters<br/>• Private Scrape Network<br/>• Internal Telemetry Flow"]
+    end
+
+    subgraph TrustZoneHost["Host Kernel & Storage Boundary"]
+        HostDockerSock["Docker Daemon IPC<br/>(unix:///var/run/docker.sock)"]
+        PostgresVolume["Named Volume: postgres_data<br/>(Host Filesystem: /var/lib/docker/volumes)"]
+    end
+
+    BrowserClient -->|HTTP Cleartext Port 80| SGRules
+    ExternalAgent -->|HTTP Cleartext Port 80| SGRules
+    GHAgent -.->|SSH Port 22 Handshake| SGRules
+
+    SGRules --> NginxEdge
+    NginxEdge -->|Private Bridge| FastAPI
+    NginxEdge -->|Private Bridge| PrometheusEngine
+    FastAPI -->|Private Bridge SQL| PostgreSQL
+    PostgreSQL --- PostgresVolume
+    ExternalAgent -.->|Needs Host Socket| HostDockerSock

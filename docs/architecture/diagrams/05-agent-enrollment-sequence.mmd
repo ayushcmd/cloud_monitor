@@ -1,0 +1,32 @@
+sequenceDiagram
+    autonumber
+    actor User as Platform Operator / User
+    participant Browser as React Frontend (SPA)
+    participant Nginx as Edge Nginx (Port 80)
+    participant Backend as FastAPI Backend (:8000)
+    participant DB as PostgreSQL Database
+    actor DockerAgent as Docker Monitoring Agent
+
+    User->>Browser: Opens "Connect Docker Environment" modal
+    User->>Browser: Enters Host Name (e.g. "prod-docker-01") & OS (Linux / Windows)
+    Browser->>Nginx: POST /api/v1/agents/enroll {name, os_type} + Bearer JWT
+    Nginx->>Backend: Proxy POST /api/v1/agents/enroll
+    Backend->>Backend: generate_agent_key() -> 256-bit raw key, SHA-256 hash, 16-char prefix
+    Backend->>DB: INSERT INTO agents (name, os_type, agent_key_hash, agent_key_prefix, status='pending')
+    DB-->>Backend: Agent ID created
+    Backend-->>Nginx: HTTP 201 Created {id, name, raw_agent_key, agent_key_prefix}
+    Nginx-->>Browser: HTTP 201 Created {raw_agent_key, ...}
+    Browser->>User: Displays one-time generated Docker run command with embedded key
+    User->>DockerAgent: Executes generated command on target Docker host
+    Note over DockerAgent: Agent starts, reads CLOUDMONITOR_AGENT_KEY from environment
+    DockerAgent->>Nginx: POST /api/v1/agents/heartbeat with Header X-Agent-Key
+    Nginx->>Backend: Proxy POST /api/v1/agents/heartbeat
+    Backend->>Backend: Computes SHA-256(X-Agent-Key) & queries DB
+    Backend->>DB: UPDATE agents SET status='online', last_heartbeat=now() WHERE agent_key_hash=:hash
+    DB-->>Backend: OK
+    Backend-->>Nginx: HTTP 200 OK {status: 'ok', agent_id: 1}
+    Nginx-->>DockerAgent: HTTP 200 OK
+    Browser->>Nginx: GET /api/v1/agents/{id}/connection-status (Polling every 3s)
+    Nginx->>Backend: Proxy GET /connection-status
+    Backend-->>Browser: HTTP 200 OK {stage: 'heartbeat_received', status: 'online'}
+    Browser->>User: Connection Wizard displays green checkmark: Agent Connected!

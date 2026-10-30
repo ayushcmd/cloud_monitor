@@ -1,0 +1,30 @@
+flowchart TD
+    subgraph Failures["Observable Failure Scenarios"]
+        f_ssh["Scenario A: CD SSH Connection Timeout<br/>(ssh: connect to host *** port 22: Connection timed out)"]
+        f_pg["Scenario B: PostgreSQL Container Crash / Corruption<br/>(FATAL: password authentication failed or lock error)"]
+        f_agent["Scenario C: Docker Agent Shows 'OFFLINE'<br/>(Heartbeat > 90s delta or refused connection)"]
+        f_prom["Scenario D: Prometheus Targets 0/0 or Down<br/>(Container unreachable / scrape timeout)"]
+        f_oom["Scenario E: Linux Host OOM Panic<br/>(Build spike exhausts 1 GB RAM without swap)"]
+    end
+
+    subgraph Diagnostics["Diagnosis & Verification Checks"]
+        d_ssh["Check AWS Security Group port 22 inbound rules<br/>Run diagnostic workflow in cd.yml to get runner IP"]
+        d_pg["Inspect: docker logs cloudmonitor-postgres<br/>Verify .env DATABASE_URL matches POSTGRES_PASSWORD"]
+        d_agent["Inspect: docker logs cloudmonitor-agent<br/>Verify X-Agent-Key and server endpoint URL"]
+        d_prom["Query: /prom/api/v1/targets<br/>Check container health and internal DNS resolution"]
+        d_oom["Run: free -h & sudo swapon --show<br/>Verify 2 GB swapfile active"]
+    end
+
+    subgraph SafeRecovery["Safe Recovery Action (DO NOT RUN 'down -v'!)"]
+        r_ssh["Authorize specific runner IP or EC2 Instance Connect CIDR"]
+        r_pg["Restart container: docker compose restart postgres<br/>NEVER run 'docker compose down -v'"]
+        r_agent["Rotate key in UI -> Re-run agent container with new key"]
+        r_prom["Restart Prometheus: docker compose restart prometheus"]
+        r_oom["Activate swapfile: fallocate -l 2G /swapfile && swapon /swapfile"]
+    end
+
+    f_ssh --> d_ssh --> r_ssh
+    f_pg --> d_pg --> r_pg
+    f_agent --> d_agent --> r_agent
+    f_prom --> d_prom --> r_prom
+    f_oom --> d_oom --> r_oom
