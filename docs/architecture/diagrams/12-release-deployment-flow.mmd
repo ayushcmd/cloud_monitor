@@ -1,0 +1,42 @@
+flowchart TD
+    subgraph DeveloperStation["Developer Workstation"]
+        DevCode["Code Changes / Feature Branch"]
+        LocalTest["Local Validation (pytest, npm run build, compose config)"]
+        GitPush["git push origin <branch>"]
+        DevCode --> LocalTest --> GitPush
+    end
+
+    subgraph GitHubPlatform["GitHub Repository & Actions"]
+        PR["Open Pull Request -> main"]
+        CIWorkflow["GitHub Actions CI (.github/workflows/ci.yml)<br/>• backend-test (pytest)<br/>• frontend-build (Vite)<br/>• docker-compose-validate"]
+        MergeMain["PR Review & Merge to main"]
+        CDWorkflow["GitHub Actions CD (.github/workflows/cd.yml)"]
+
+        GitPush --> PR
+        PR --> CIWorkflow
+        CIWorkflow -->|Pass Green| MergeMain
+        MergeMain -->|Triggers Push Event| CDWorkflow
+    end
+
+    subgraph HostDeployment["Target AWS EC2 Host (3.25.150.231)"]
+        SSHConnect["SSH Connection to ec2-target<br/>(User: ubuntu, StrictHostKeyChecking yes)"]
+        DeployCommands["Remote Deployment Script:<br/>1. cd /home/ubuntu/cloud_monitor<br/>2. Guard: verify .env exists<br/>3. git fetch & reset --hard origin/main<br/>4. docker compose pull external images<br/>5. docker compose build backend frontend<br/>6. docker compose up -d --remove-orphans"]
+        HealthProbes["Post-Deployment Health Verifications:<br/>• curl http://$EC2_HOST/ (HTTP 200)<br/>• curl http://$EC2_HOST/health (status: healthy)<br/>• curl http://$EC2_HOST/prom/api/v1/targets (all UP)"]
+
+        CDWorkflow -->|Step 3: SSH Handshake| SSHConnect
+        SSHConnect -->|Success| DeployCommands
+        DeployCommands --> HealthProbes
+        HealthProbes -->|All 3 Pass| DeploymentOK["Deployment Succeeded"]
+    end
+
+    subgraph FailureBranches["Failure Handling & Safety Guards"]
+        f1["Secret Validation Failure -> Abort (No Action)"]
+        f2["SSH Timeout (Port 22 Blocked) -> Abort (No Host Changes)"]
+        f3["Missing .env on Host -> Abort (Database Protected)"]
+        f4["Health Probe Failure -> Alert / Pipeline Failure Exit"]
+
+        CDWorkflow -.->|Secrets Missing| f1
+        SSHConnect -.->|Port 22 Blocked| f2
+        DeployCommands -.->|Missing .env| f3
+        HealthProbes -.->|HTTP != 200| f4
+    end

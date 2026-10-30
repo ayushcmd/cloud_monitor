@@ -1,0 +1,52 @@
+flowchart TB
+    subgraph HostNetwork["Local Host Ports (Development Machine)"]
+        P5173["localhost:5173"]
+        P8000["localhost:8000"]
+        P5433["localhost:5433"]
+        P9090["localhost:9090"]
+        P9093["localhost:9093"]
+        P3000["localhost:3000"]
+        P8080["localhost:8080"]
+        P9100["localhost:9100"]
+    end
+
+    subgraph LocalComposeStack["Docker Compose Development Stack (docker-compose.yml)"]
+        subgraph DevNetwork["Docker Network: app-network (bridge)"]
+            c_fe["frontend (Vite Dev Server)<br/>Image: node:20-alpine"]
+            c_be["backend (FastAPI / Uvicorn)<br/>Image: cloudmonitor-backend:latest"]
+            c_pg["postgres<br/>Image: postgres:16-alpine"]
+            c_prom["prometheus<br/>Image: prom/prometheus:v2.54.1"]
+            c_am["alertmanager<br/>Image: prom/alertmanager:v0.27.0"]
+            c_graf["grafana<br/>Image: grafana/grafana:11.2.0"]
+            c_cad["cadvisor<br/>Image: gcr.io/cadvisor/cadvisor:v0.49.1"]
+            c_node["node-exporter<br/>Image: prom/node-exporter:v1.8.2"]
+        end
+
+        subgraph LocalVolumes["Named Docker Volumes"]
+            v_pg["postgres_data"]
+            v_prom["prometheus_data"]
+            v_am["alertmanager_data"]
+            v_graf["grafana_data"]
+        end
+    end
+
+    P5173 -->|Mapped Port 80| c_fe
+    P8000 -->|Mapped Port 8000| c_be
+    P5433 -->|Mapped Port 5432| c_pg
+    P9090 -->|Mapped Port 9090| c_prom
+    P9093 -->|Mapped Port 9093| c_am
+    P3000 -->|Mapped Port 3000| c_graf
+    P8080 -->|Mapped Port 8080| c_cad
+    P9100 -->|Mapped Port 9100| c_node
+
+    c_pg --- v_pg
+    c_prom --- v_prom
+    c_am --- v_am
+    c_graf --- v_graf
+
+    c_fe -->|HTTP Proxy /api| c_be
+    c_be -->|SQL :5432| c_pg
+    c_prom -->|Scrape :8000| c_be
+    c_prom -->|Scrape :9100| c_node
+    c_prom -->|Scrape :8080| c_cad
+    c_graf -->|PromQL Query| c_prom

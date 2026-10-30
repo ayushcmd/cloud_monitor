@@ -1,0 +1,52 @@
+flowchart TD
+    subgraph TriggerEvent["Trigger Events (.github/workflows/ci.yml)"]
+        EventPush["Push to Branches:<br/>main, master, cloudmonitor-integration"]
+        EventPR["Pull Request Targeting:<br/>main, master, cloudmonitor-integration"]
+        EventManual["Manual Execution:<br/>workflow_dispatch"]
+    end
+
+    subgraph GitHubRunner["GitHub Actions Runner (ubuntu-latest)"]
+        subgraph JobBackend["Job 1: backend-test (Timeout: 10m)"]
+            step_checkout_b["actions/checkout@v4"]
+            step_python["actions/setup-python@v5 (Python 3.12, cache: pip)"]
+            step_deps_b["pip install -r backend/requirements.txt -r agent/requirements.txt"]
+            step_pytest["pytest -v --tb=short tests/ agent/tests/<br/>(APP_ENV=test, SQLite memory DB)"]
+            step_checkout_b --> step_python --> step_deps_b --> step_pytest
+        end
+
+        subgraph JobFrontend["Job 2: frontend-build (Timeout: 10m)"]
+            step_checkout_f["actions/checkout@v4"]
+            step_node["actions/setup-node@v4 (Node 20, cache: npm)"]
+            step_npm["npm ci in frontend/"]
+            step_build["npm run build (Vite production bundle)"]
+            step_verify_dist["test -f frontend/dist/index.html"]
+            step_checkout_f --> step_node --> step_npm --> step_build --> step_verify_dist
+        end
+
+        subgraph JobCompose["Job 3: docker-compose-validate (Timeout: 5m)"]
+            step_checkout_c["actions/checkout@v4"]
+            step_val_dev["docker compose -f docker-compose.yml config --quiet"]
+            step_val_prod["docker compose -f docker-compose.prod.yml config --quiet"]
+            step_checkout_c --> step_val_dev --> step_val_prod
+        end
+    end
+
+    subgraph ResultStatus["Status Checks & Branch Protection"]
+        ChecksPassed["All 3 CI Jobs Pass Green<br/>(PR Eligible for Merge)"]
+    end
+
+    EventPush --> JobBackend
+    EventPush --> JobFrontend
+    EventPush --> JobCompose
+
+    EventPR --> JobBackend
+    EventPR --> JobFrontend
+    EventPR --> JobCompose
+
+    EventManual --> JobBackend
+    EventManual --> JobFrontend
+    EventManual --> JobCompose
+
+    JobBackend --> ChecksPassed
+    JobFrontend --> ChecksPassed
+    JobCompose --> ChecksPassed

@@ -1,0 +1,51 @@
+flowchart TB
+    subgraph ClientTier["Client / Edge Presentation Tier"]
+        BrowserUI["React 18 SPA<br/>(Vite Bundle / Modern UI)"]
+        NginxServer["Nginx 1.31.8 Reverse Proxy<br/>(Port 80 Ingress)"]
+        BrowserUI -->|HTTP Static Assets| NginxServer
+    end
+
+    subgraph AppTier["Application Services Tier"]
+        FastAPIBackend["FastAPI Backend (Python 3.12)<br/>(Async Uvicorn Server: 8000)"]
+        AuthModule["JWT Auth & Security<br/>(OAuth2PasswordBearer / HS256)"]
+        AgentRouter["Agent Management Router<br/>(/api/v1/agents)"]
+        MetricRouter["Telemetry Ingestion Router<br/>(/api/v1/metrics)"]
+        PromMiddleware["Prometheus Request Middleware<br/>(HTTP Duration / Counts)"]
+
+        FastAPIBackend --> AuthModule
+        FastAPIBackend --> AgentRouter
+        FastAPIBackend --> MetricRouter
+        FastAPIBackend --> PromMiddleware
+    end
+
+    subgraph DataTier["Data Persistence Tier"]
+        PostgresDB[("PostgreSQL 16 Alpine Database<br/>(Named Volume: postgres_data)")]
+        UsersTable["users Table<br/>(email, password_hash)"]
+        AgentsTable["agents Table<br/>(agent_key_hash, os_type, status)"]
+        MetricsTable["container_metrics Table<br/>(cpu, memory, restart_count)"]
+
+        PostgresDB --- UsersTable
+        PostgresDB --- AgentsTable
+        PostgresDB --- MetricsTable
+    end
+
+    subgraph ObservabilityTier["Monitoring & Observability Core"]
+        PrometheusServer["Prometheus Server v2.54.1<br/>(Scraping TSDB Engine)"]
+        AlertmanagerCore["Alertmanager v0.27.0<br/>(Rule Alert Routing)"]
+        NodeExporterDaemon["Node Exporter v1.8.2<br/>(Host Hardware Metrics)"]
+
+        PrometheusServer -->|Scrapes /metrics| FastAPIBackend
+        PrometheusServer -->|Scrapes :9100| NodeExporterDaemon
+        PrometheusServer -->|Dispatches Alerts| AlertmanagerCore
+    end
+
+    subgraph EdgeAgent["External Docker Host Agent"]
+        DockerCollector["Metrics Collector<br/>(Docker Engine SDK / Socket)"]
+        HttpSender["HTTP Payload Sender<br/>(X-Agent-Key Header)"]
+        DockerCollector --> HttpSender
+    end
+
+    NginxServer -->|Proxy /api/* & /health| FastAPIBackend
+    NginxServer -->|Proxy /prom/*| PrometheusServer
+    FastAPIBackend -->|SQLAlchemy / psycopg2| PostgresDB
+    HttpSender -->|HTTP POST Telemetry| NginxServer

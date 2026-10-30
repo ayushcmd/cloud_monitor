@@ -14,10 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Upgrade packaging tools and install python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=100 -r requirements.txt
 
-# Copy application source code
+# Copy application source code and migrations
+COPY alembic.ini ./alembic.ini
+COPY alembic/ ./alembic/
 COPY app/ ./app/
 
 # Create non-root user for security best practice

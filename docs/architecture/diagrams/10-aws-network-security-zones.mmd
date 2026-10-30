@@ -1,0 +1,53 @@
+flowchart TB
+    subgraph InternetZone["Public Internet Zone"]
+        Users["Browser Users / Operators"]
+        DockerAgents["Remote Docker Agents"]
+        GHActions["GitHub Actions Runners"]
+    end
+
+    subgraph AWSVPC["AWS VPC: vpc-06ac619b3bfac5b92 (Region: ap-southeast-2)"]
+        IGW["Internet Gateway"]
+
+        subgraph PublicSubnet["Public Subnet: subnet-06b5dda6e5b3debcd (ap-southeast-2b)"]
+            subgraph SecurityGroup["Security Group: sg-0e3f2d84ee3e354ac (launch-wizard-2)"]
+                Rule80["Inbound TCP 80: 0.0.0.0/0 (HTTP Allowed)"]
+                Rule443["Inbound TCP 443: 0.0.0.0/0 (HTTPS Allowed)"]
+                Rule22["Inbound TCP 22: Restricted<br/>(13.239.158.0/29 & Operator /32 IP)"]
+            end
+
+            subgraph EC2HostInstance["EC2 Instance: i-0c6927e10d2f58d23 (t3.micro / 3.25.150.231)"]
+                HostOS["Ubuntu 24.04 LTS Host OS (1 GB RAM + 2 GB Swap)"]
+
+                subgraph HostPublished["Published Host Port"]
+                    Port80Bind["0.0.0.0:80 -> cloudmonitor-frontend:80"]
+                end
+
+                subgraph InternalBridge["Private Docker Network: cloudmonitor-network"]
+                    fe["cloudmonitor-frontend (Nginx Proxy)"]
+                    be["cloudmonitor-backend (:8000 private)"]
+                    pg["cloudmonitor-postgres (:5432 private)"]
+                    prom["cloudmonitor-prometheus (:9090 private)"]
+                    ne["cloudmonitor-node-exporter (:9100 private)"]
+                    am["cloudmonitor-alertmanager (:9093 private)"]
+                end
+
+                subgraph StorageEBS["Attached Storage"]
+                    EBSVol["gp3 Root Volume: vol-0b3e5a4240b5e517a (20 GiB)"]
+                    NamedVol["Docker Named Volume: cloudmonitor-prod_postgres_data"]
+                    EBSVol --- NamedVol
+                end
+            end
+        end
+    end
+
+    Users -->|HTTP Port 80| IGW --> Rule80 --> Port80Bind --> fe
+    DockerAgents -->|HTTP Ingest Port 80| IGW --> Rule80 --> Port80Bind --> fe
+    GHActions -.->|SSH Port 22 Blocked by SG| IGW -.-> Rule22
+
+    fe --> be
+    fe --> prom
+    be --> pg
+    prom --> be
+    prom --> ne
+    prom --> am
+    pg --- NamedVol

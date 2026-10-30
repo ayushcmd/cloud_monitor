@@ -1,0 +1,42 @@
+flowchart LR
+    subgraph ScrapeTargets["Configured Prometheus Scrape Targets (Interval: 15s)"]
+        target_self["prometheus<br/>localhost:9090/-/metrics"]
+        target_backend["cloudmonitor-backend<br/>backend:8000/metrics"]
+        target_node["node-exporter<br/>node-exporter:9100/metrics"]
+        target_am["alertmanager<br/>alertmanager:9093/metrics"]
+    end
+
+    subgraph PrometheusCore["Prometheus TSDB Engine (v2.54.1)"]
+        Scraper["Scrape Loop Engine<br/>(15s interval, 10s timeout)"]
+        TSDB["Time-Series Storage (TSDB)<br/>(2 days retention / 64MB memory limit)"]
+        RuleEval["Rule Evaluation Engine<br/>(Evaluated every 15s)"]
+
+        Scraper --> TSDB
+        TSDB --> RuleEval
+    end
+
+    subgraph ConfiguredRules["Alert Rule Definitions (monitoring/alerts/rules.yml)"]
+        r1["HostHighCpuUtilization (>85% for 1m)"]
+        r2["HostHighMemoryUtilization (>85% for 1m)"]
+        r3["CloudMonitorApplicationDown (up == 0 for 15s)"]
+        r4["CloudMonitorHealthDegraded (health == 0 for 15s)"]
+        r5["HighHttpErrorRate (>0.05 5xx/s for 30s)"]
+        r6["HighRequestLatency (P95 > 500ms for 1m)"]
+    end
+
+    subgraph AlertmanagerCore["Alertmanager (v0.27.0)"]
+        Deduplicator["Alert Ingestion & Deduplication"]
+        Router["Routing Tree (group_by: alertname, severity)"]
+        Receivers["Configured Receivers:<br/>1. cloudmonitor-default-log<br/>2. cloudmonitor-critical-receiver<br/>(NOTE: webhooks empty)"]
+
+        Deduplicator --> Router
+        Router --> Receivers
+    end
+
+    target_self --> Scraper
+    target_backend --> Scraper
+    target_node --> Scraper
+    target_am --> Scraper
+
+    RuleEval --> ConfiguredRules
+    ConfiguredRules -->|Fires Active Alerts| AlertmanagerCore
