@@ -1,271 +1,303 @@
-name: CloudMonitor CD — Deploy to AWS EC2
+name: CloudMonitor CD — Deploy to AWS EC2 via SSM
 
+# Manual-only during migration. Re-enable push-to-main only after SSM is verified.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
-      target_env:
-        description: "Target environment to deploy"
+      operation:
+        description: "Choose OIDC check, SSM preflight, deploy, or rollback"
         required: true
-        default: "production"
         type: choice
-        options:
-          - production
-      diagnostic_only:
-        description: "Run diagnostic connectivity check only (reports runner egress IP, skips deployment)"
+        options: [oidc-check, ssm-preflight, deploy, rollback]
+        default: oidc-check
+      confirm_production:
+        description: "Required for production deploy and rollback"
         required: false
-        default: false
         type: boolean
-
-concurrency:
-  group: production-deployment
-  cancel-in-progress: false
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: cloudmonitor-production-deployment
+  cancel-in-progress: false
+
 jobs:
-  diagnostics:
-    name: Runner Network & IP Diagnostics
-    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_only == true
+  ssm:
+    name: CloudMonitor Production — SSM
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Discover Runner Public Egress IP
-        run: |
-          echo "=== GitHub-hosted Runner Egress IP Discovery ==="
-          RUNNER_IP=$(curl -s -m 5 https://api.ipify.org || curl -s -m 5 https://ifconfig.me || curl -s -m 5 https://icanhazip.com)
-          echo "Runner Public Egress IP: $RUNNER_IP"
-          echo "================================================="
-          echo "Note: If inbound SSH traffic is restricted, verify that network access control permits traffic from this runner's IP address."
-
-      - name: Probe TCP Port 22 Reachability
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          if [ -z "$EC2_HOST" ]; then
-            echo "::warning::Secret EC2_HOST is not configured; skipping port 22 probe."
-            exit 0
-          fi
-          echo "Probing TCP port 22 reachability to EC2 host..."
-          if nc -z -w 5 "$EC2_HOST" 22 >/dev/null 2>&1; then
-            echo "Result: Port 22 is OPEN and REACHABLE from this runner."
-          else
-            echo "::error::Result: Port 22 is unreachable from this runner (connection timed out or refused). This may be due to an AWS Security Group, Network ACL, routing, host firewall, or other network restriction."
-            exit 1
-          fi
-
-  deploy:
-    name: Deploy to AWS EC2
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.diagnostic_only)
     environment: production
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ap-southeast-2
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      OPERATION: ${{ inputs.operation }}
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Validate Deployment Secrets
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          EC2_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+      - name: Validate requested operation and configuration
+        shell: bash
         run: |
-          MISSING=0
-          if [ -z "$EC2_HOST" ]; then
-            echo "::error::Secret EC2_HOST is not configured in repository or environment secrets."
-            MISSING=1
-          fi
-          if [ -z "$EC2_USER" ]; then
-            echo "::error::Secret EC2_USER is not configured in repository or environment secrets."
-            MISSING=1
-          fi
-          if [ -z "$EC2_KEY" ]; then
-            echo "::error::Secret EC2_SSH_PRIVATE_KEY is not configured in repository or environment secrets."
-            MISSING=1
-          fi
-          if [ -z "$EC2_KNOWN_HOSTS" ]; then
-            echo "::error::Secret EC2_SSH_KNOWN_HOSTS is not configured in repository or environment secrets. Strict SSH host-key verification requires a verified known_hosts entry."
-            MISSING=1
-          fi
-
-          if [ "$MISSING" -ne 0 ]; then
-            echo "::error::Deployment prerequisites missing. Configure the required secrets in GitHub: Settings -> Secrets and variables -> Actions (Repository secrets or Environment 'production' secrets)."
+          set -euo pipefail
+          case "$OPERATION" in
+            oidc-check|ssm-preflight|deploy|rollback) ;;
+            *) echo "::error::Unsupported operation."; exit 1 ;;
+          esac
+          if [[ "$OPERATION" == "deploy" || "$OPERATION" == "rollback" ]] && [[ "$CONFIRM_PRODUCTION" != "true" ]]; then
+            echo "::error::Set confirm_production=true for production deploy/rollback."
             exit 1
           fi
-          echo "All required deployment secrets are present."
-
-      - name: Set up SSH Private Key and Known Hosts
-        env:
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # Write private key with strict permissions, removing any Windows CRLF
-          printf "%s\n" "$EC2_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-          # Write independently verified known_hosts entry, removing any Windows CRLF
-          printf "%s\n" "$EC2_SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
-          # Configure SSH client with strict host key checking enabled and keep-alive
-          cat << 'EOF' > ~/.ssh/config
-          Host ec2-target
-            HostName ${{ secrets.EC2_HOST }}
-            User ${{ secrets.EC2_USER }}
-            IdentityFile ~/.ssh/deploy_key
-            StrictHostKeyChecking yes
-            UserKnownHostsFile ~/.ssh/known_hosts
-            ConnectTimeout 15
-            ServerAliveInterval 15
-            ServerAliveCountMax 4
-            BatchMode yes
-          EOF
-          chmod 600 ~/.ssh/config
-
-      - name: Verify SSH Connectivity with Host Verification
-        run: |
-          echo "Verifying secure SSH connectivity with strict host-key verification..."
-          ssh ec2-target "uptime && docker --version"
-
-      - name: Deploy Application Stack via Docker Compose
-        run: |
-          echo "Syncing latest configuration and deploying services to EC2..."
-          ssh ec2-target "bash -s" << 'EOF'
-            set -euo pipefail
-            DEPLOY_DIR="/home/ubuntu/cloud_monitor"
-
-            if [ ! -d "$DEPLOY_DIR" ]; then
-              echo "::error::Target directory $DEPLOY_DIR does not exist on host."
-              exit 1
-            fi
-            cd "$DEPLOY_DIR"
-
-            # 1. Protect production configuration (never automatically create or overwrite)
-            if [ ! -f .env ]; then
-              echo "::error::Production environment file ($DEPLOY_DIR/.env) does not exist! Deployment stopped to protect database and secrets."
-              exit 1
-            fi
-
-            # 2. Update code from main branch if git repository is initialized
-            if [ -d .git ]; then
-              git config --global --add safe.directory "$DEPLOY_DIR" || true
-              git fetch origin main
-              git checkout -f main
-              git reset --hard origin/main
-            fi
-
-            # 3. Pull required external images
-            sudo docker compose -f docker-compose.prod.yml pull prometheus node-exporter alertmanager postgres || true
-
-            # 4. Safely build/update backend and frontend without disturbing PostgreSQL volumes
-            sudo docker compose -f docker-compose.prod.yml build backend frontend
-
-            # 5. Bring up services idempotently (preserves postgres_data volume)
-            sudo docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-            # 6. Verify container status on host
-            echo "Verifying running container states on host..."
-            sudo docker compose -f docker-compose.prod.yml ps
-
-            echo "Stack deployment commands completed successfully."
-          EOF
-
-      - name: Verify Production Health and Telemetry Endpoints
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          echo "Performing post-deployment health check against EC2 entrypoint..."
-          FRONTEND_URL="http://${EC2_HOST}/"
-          BACKEND_HEALTH_URL="http://${EC2_HOST}/health"
-          TARGETS_URL="http://${EC2_HOST}/prom/api/v1/targets"
-
-          # 1. Bounded health check for Frontend SPA public entrypoint
-          echo "Checking frontend public endpoint at $FRONTEND_URL..."
-          FRONTEND_SUCCESS=false
-          for i in {1..12}; do
-            STATUS=$(curl -s -m 5 -o /dev/null -w "%{http_code}" "$FRONTEND_URL" || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Frontend public endpoint responded with HTTP 200 on attempt $i."
-              FRONTEND_SUCCESS=true
-              break
-            fi
-            echo "Waiting for frontend entrypoint (attempt $i/12, status: $STATUS)..."
-            sleep 5
-          done
-
-          if [ "$FRONTEND_SUCCESS" != "true" ]; then
-            echo "::error::Frontend public endpoint check failed at $FRONTEND_URL after 12 attempts."
-            exit 1
-          fi
-
-          # 2. Bounded health check for FastAPI backend & Nginx reverse proxy
-          echo "Checking backend health at $BACKEND_HEALTH_URL..."
-          BACKEND_SUCCESS=false
-          for i in {1..12}; do
-            BACKEND_RES=$(curl -s -m 5 "$BACKEND_HEALTH_URL" || true)
-            if echo "$BACKEND_RES" | grep -q '"status":"healthy"'; then
-              echo "Backend health check succeeded on attempt $i: $BACKEND_RES"
-              BACKEND_SUCCESS=true
-              break
-            fi
-            echo "Waiting for backend health probe (attempt $i/12)..."
-            sleep 5
-          done
-
-          if [ "$BACKEND_SUCCESS" != "true" ]; then
-            echo "::error::Backend health check failed at $BACKEND_HEALTH_URL after 12 attempts."
-            exit 1
-          fi
-
-          # 3 & 4. Bounded check for Prometheus scrape targets API and all required targets UP
-          echo "Validating Prometheus scrape targets proxy at $TARGETS_URL..."
-          TARGETS_SUCCESS=false
-          EXPECTED_TARGETS=("alertmanager" "cloudmonitor-backend" "node-exporter" "prometheus")
-
-          for i in {1..10}; do
-            TARGETS_RES=$(curl -s -m 5 "$TARGETS_URL" || true)
-            if echo "$TARGETS_RES" | jq -e '.status == "success"' >/dev/null 2>&1; then
-              DOWN_TARGETS=$(echo "$TARGETS_RES" | jq -r '[.data.activeTargets[] | select(.health != "up") | .scrapePool] | join(", ")' 2>/dev/null || true)
-              ACTIVE_COUNT=$(echo "$TARGETS_RES" | jq -r '.data.activeTargets | length' 2>/dev/null || echo "0")
-
-              MISSING_TARGETS=()
-              for target in "${EXPECTED_TARGETS[@]}"; do
-                FOUND=$(echo "$TARGETS_RES" | jq -r --arg t "$target" '[.data.activeTargets[] | select(.scrapePool == $t)] | length' 2>/dev/null || echo "0")
-                if [ "$FOUND" -eq 0 ]; then
-                  MISSING_TARGETS+=("$target")
-                fi
-              done
-
-              if [ "$ACTIVE_COUNT" -ge 4 ] && [ -z "$DOWN_TARGETS" ] && [ ${#MISSING_TARGETS[@]} -eq 0 ]; then
-                echo "Prometheus targets check succeeded on attempt $i: $ACTIVE_COUNT targets active and all UP (${EXPECTED_TARGETS[*]})."
-                TARGETS_SUCCESS=true
-                break
-              else
-                [ -n "$DOWN_TARGETS" ] && echo "::warning::Unhealthy targets detected: $DOWN_TARGETS (attempt $i/10)..."
-                [ ${#MISSING_TARGETS[@]} -gt 0 ] && echo "::warning::Missing expected targets: ${MISSING_TARGETS[*]} (attempt $i/10)..."
+          if [[ "$OPERATION" != "oidc-check" ]]; then
+            for name in AWS_ACCOUNT_ID AWS_DEPLOY_ROLE_ARN EC2_INSTANCE_ID; do
+              if [[ -z "${!name}" ]]; then
+                echo "::error::Missing GitHub Environment variable: $name (environment: production)."
+                exit 1
               fi
-            fi
-            echo "Waiting for Prometheus target discovery (attempt $i/10)..."
-            sleep 5
-          done
+            done
+            [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "::error::AWS_ACCOUNT_ID must be 12 digits."; exit 1; }
+            [[ "$EC2_INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "::error::Invalid EC2_INSTANCE_ID."; exit 1; }
+            case "$AWS_DEPLOY_ROLE_ARN" in
+              "arn:aws:iam::${AWS_ACCOUNT_ID}:role/"*) ;;
+              *) echo "::error::AWS_DEPLOY_ROLE_ARN does not match AWS_ACCOUNT_ID."; exit 1 ;;
+            esac
+          fi
 
-          if [ "$TARGETS_SUCCESS" != "true" ]; then
-            echo "::error::Prometheus scrape targets verification failed at $TARGETS_URL after 10 attempts."
+      - name: Inspect OIDC claims (token value is never logged)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com"
+          request = urllib.request.Request(url, headers={
+              "Authorization": f"bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"
+          })
+          with urllib.request.urlopen(request, timeout=15) as response:
+              token = json.load(response)["value"]
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          print("OIDC issuer:", claims.get("iss"))
+          print("OIDC audience:", claims.get("aud"))
+          print("OIDC subject:", claims.get("sub"))
+          if claims.get("iss") != "https://token.actions.githubusercontent.com":
+              raise SystemExit("Unexpected OIDC issuer.")
+          aud = claims.get("aud")
+          if aud != "sts.amazonaws.com" and not (isinstance(aud, list) and "sts.amazonaws.com" in aud):
+              raise SystemExit("Unexpected OIDC audience.")
+          PY
+
+      - name: Configure AWS credentials using GitHub OIDC
+        if: inputs.operation != 'oidc-check'
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: CloudMonitor-SSM-${{ github.run_id }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+
+      - name: Verify AWS identity and SSM managed-node status
+        if: inputs.operation != 'oidc-check'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "$ACTUAL_ACCOUNT" == "$AWS_ACCOUNT_ID" ]] || { echo "::error::Unexpected AWS account."; exit 1; }
+          PING_STATUS="$(aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=${EC2_INSTANCE_ID}" \
+            --query 'InstanceInformationList[0].PingStatus' --output text)"
+          [[ "$PING_STATUS" == "Online" ]] || {
+            echo "::error::EC2 is not Online in SSM (status: $PING_STATUS). Fix instance role, SSM Agent, and outbound HTTPS before deploying."
+            exit 1
+          }
+          echo "Expected AWS account verified; EC2 is Online in Systems Manager."
+
+      - name: Run SSM preflight, deployment, or rollback
+        if: inputs.operation != 'oidc-check'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            ssm-preflight)
+              REMOTE_SCRIPT="$(cat <<'REMOTE'
+          set -Eeuo pipefail
+          DEPLOY_DIR="/home/ubuntu/cloud_monitor"
+          git config --global --add safe.directory "$DEPLOY_DIR" || true
+          test -d "$DEPLOY_DIR"
+          test -f "$DEPLOY_DIR/.env"
+          cd "$DEPLOY_DIR"
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "ERROR: .env is tracked by Git. Refusing to continue."
+            exit 1
+          fi
+          command -v git >/dev/null
+          command -v curl >/dev/null
+          sudo -n docker --version
+          sudo -n docker compose version
+          sudo -n docker compose -f docker-compose.prod.yml config --quiet
+          sudo -n docker compose -f docker-compose.prod.yml ps
+          echo "SSM preflight passed. No application or database changes were made."
+          REMOTE
+          )"
+              ;;
+            deploy)
+              REMOTE_SCRIPT="$(cat <<'REMOTE'
+          set -Eeuo pipefail
+          DEPLOY_DIR="/home/ubuntu/cloud_monitor"
+          git config --global --add safe.directory "$DEPLOY_DIR" || true
+          cd "$DEPLOY_DIR"
+          test -f .env
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "ERROR: .env is tracked by Git. Refusing to deploy."
             exit 1
           fi
 
-          echo "All production health, frontend, backend, and monitoring checks passed."
+          PREVIOUS_SHA="$(git rev-parse HEAD)"
+          rollback_on_error() {
+            local rc=$?
+            trap - ERR
+            echo "Deployment failed; attempting rollback to ${PREVIOUS_SHA}."
+            git checkout -B main "$PREVIOUS_SHA" || true
+            sudo -n docker compose -f docker-compose.prod.yml build backend frontend || true
+            sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans || true
+            exit "$rc"
+          }
+          trap rollback_on_error ERR
 
-      - name: Clean up SSH Temporary Credentials
-        if: always()
-        run: |
-          rm -f ~/.ssh/deploy_key ~/.ssh/config ~/.ssh/known_hosts
-          echo "SSH temporary credentials and host keys removed from runner environment."
+          sudo -n install -d -m 0750 /var/lib/cloudmonitor
+          printf '%s\n' "$PREVIOUS_SHA" | sudo -n tee /var/lib/cloudmonitor/previous-deploy-sha >/dev/null
+          git fetch --prune origin main
+          git checkout -B main origin/main
+          DEPLOY_SHA="$(git rev-parse HEAD)"
+
+          sudo -n docker compose -f docker-compose.prod.yml config --quiet
+          sudo -n docker compose -f docker-compose.prod.yml pull prometheus node-exporter alertmanager
+          sudo -n docker compose -f docker-compose.prod.yml build backend frontend
+          sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+          wait_for_http() {
+            local url="$1" attempt status
+            for attempt in $(seq 1 12); do
+              status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$url" || true)"
+              [[ "$status" == "200" ]] && return 0
+              sleep 5
+            done
+            echo "HTTP health check failed: $url"
+            return 1
+          }
+          wait_for_backend() {
+            local attempt body
+            for attempt in $(seq 1 12); do
+              body="$(curl -fsS --max-time 5 http://127.0.0.1/health 2>/dev/null || true)"
+              if printf '%s' "$body" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "healthy" else 1)' 2>/dev/null; then return 0; fi
+              sleep 5
+            done
+            echo "Backend did not report status=healthy."
+            return 1
+          }
+          wait_for_prometheus() {
+            local attempt body
+            for attempt in $(seq 1 12); do
+              body="$(curl -fsS --max-time 5 http://127.0.0.1/prom/api/v1/targets 2>/dev/null || true)"
+              if printf '%s' "$body" | python3 -c 'import json,sys; p=json.load(sys.stdin); required={"alertmanager","cloudmonitor-backend","node-exporter","prometheus"}; ts=p.get("data",{}).get("activeTargets",[]); bad=[n for n in required if not any(t.get("scrapePool")==n and t.get("health")=="up" for t in ts)]; sys.exit(0 if p.get("status")=="success" and not bad else 1)' 2>/dev/null; then return 0; fi
+              sleep 5
+            done
+            echo "Prometheus targets are not all healthy."
+            return 1
+          }
+
+          wait_for_http "http://127.0.0.1/"
+          wait_for_backend
+          wait_for_prometheus
+          printf '%s\n' "$DEPLOY_SHA" | sudo -n tee /var/lib/cloudmonitor/last-successful-deploy-sha >/dev/null
+          trap - ERR
+          echo "Deployment and health checks succeeded for ${DEPLOY_SHA}."
+          echo "No PostgreSQL volume was deleted or recreated."
+          REMOTE
+          )"
+              ;;
+            rollback)
+              REMOTE_SCRIPT="$(cat <<'REMOTE'
+          set -Eeuo pipefail
+          DEPLOY_DIR="/home/ubuntu/cloud_monitor"
+          git config --global --add safe.directory "$DEPLOY_DIR" || true
+          cd "$DEPLOY_DIR"
+          test -f .env
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "ERROR: .env is tracked by Git. Refusing to roll back."
+            exit 1
+          fi
+          CURRENT_SHA="$(git rev-parse HEAD)"
+          ROLLBACK_SHA="$(sudo -n cat /var/lib/cloudmonitor/previous-deploy-sha)"
+          git cat-file -e "${ROLLBACK_SHA}^{commit}"
+
+          restore_current_on_error() {
+            local rc=$?
+            trap - ERR
+            git checkout -B main "$CURRENT_SHA" || true
+            sudo -n docker compose -f docker-compose.prod.yml build backend frontend || true
+            sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans || true
+            exit "$rc"
+          }
+          trap restore_current_on_error ERR
+
+          git checkout -B main "$ROLLBACK_SHA"
+          sudo -n docker compose -f docker-compose.prod.yml config --quiet
+          sudo -n docker compose -f docker-compose.prod.yml build backend frontend
+          sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          curl -fsS --max-time 5 http://127.0.0.1/ >/dev/null
+          BACKEND_BODY="$(curl -fsS --max-time 5 http://127.0.0.1/health)"
+          printf '%s' "$BACKEND_BODY" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "healthy" else 1)'
+          printf '%s\n' "$CURRENT_SHA" | sudo -n tee /var/lib/cloudmonitor/previous-deploy-sha >/dev/null
+          printf '%s\n' "$ROLLBACK_SHA" | sudo -n tee /var/lib/cloudmonitor/last-successful-deploy-sha >/dev/null
+          trap - ERR
+          echo "Rollback to ${ROLLBACK_SHA} succeeded; PostgreSQL volumes were preserved."
+          REMOTE
+          )"
+              ;;
+            *)
+              echo "::error::Unsupported SSM operation."
+              exit 1
+              ;;
+          esac
+
+          PARAMETERS="$(jq -n --arg script "$REMOTE_SCRIPT" '{commands: [("bash -lc " + ($script | @sh))]}')"
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "CloudMonitor ${OPERATION} via GitHub Actions" \
+            --timeout-seconds 900 \
+            --parameters "$PARAMETERS" \
+            --query 'Command.CommandId' --output text)"
+          echo "SSM Command ID: $COMMAND_ID"
+
+          for attempt in $(seq 1 360); do
+            INVOCATION="$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" --instance-id "$EC2_INSTANCE_ID" \
+              --output json 2>/dev/null || true)"
+            STATUS="$(printf '%s' "$INVOCATION" | jq -r '.Status // "Pending"' 2>/dev/null || echo "Pending")"
+            case "$STATUS" in
+              Success)
+                printf '%s\n' "$INVOCATION" | jq -r '.StandardOutputContent // ""'
+                exit 0
+                ;;
+              Failed|TimedOut|ExecutionTimedOut|DeliveryTimedOut|Cancelled|Cancelling|Undeliverable|Terminated|InvalidPlatform|AccessDenied|NoInstancesInTag|InvalidDocument|Incomplete|RateExceeded)
+                echo "::error::SSM command ended with status: $STATUS"
+                printf '%s\n' "$INVOCATION" | jq -r '"Status details: \(.StatusDetails // "unknown")\nResponse code: \(.ResponseCode // "unknown")\nStandard output:\n\(.StandardOutputContent // "")\nStandard error:\n\(.StandardErrorContent // "")"'
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "::error::Timed out waiting for SSM command completion. Command ID: $COMMAND_ID"
+          exit 1
+
+      - name: Confirm deployment mode
+        if: inputs.operation == 'deploy'
+        run: echo "SSM production deployment completed. Review output before re-enabling push-based deployment."
