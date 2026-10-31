@@ -6,7 +6,7 @@
 
 The current CD run fails at the SSH connectivity step with a TCP port 22 connection timeout. This is a network reachability failure before the deployment command starts; it is not evidence of a bad SSH key.
 
-The replacement workflow uses GitHub Actions OIDC to assume a narrowly scoped AWS role and Systems Manager Run Command to contact one EC2 instance. The EC2 SSM Agent initiates outbound HTTPS connections. GitHub-hosted runners do not need inbound SSH access to the instance. AWS documents outbound HTTPS on port 443 to regional SSM endpoints; no inbound SSM port is required: https://docs.aws.amazon.com/systems-manager/latest/userguide/troubleshooting-ssm-agent.html
+The replacement workflow uses GitHub Actions OIDC to assume a narrowly scoped AWS role and Systems Manager Run Command to contact one EC2 instance. The workflow wraps each remote script with `bash -lc` so Bash-specific constructs are not accidentally interpreted by the default POSIX shell. The EC2 SSM Agent initiates outbound HTTPS connections. GitHub-hosted runners do not need inbound SSH access to the instance. AWS documents outbound HTTPS on port 443 to regional SSM endpoints; no inbound SSM port is required: https://docs.aws.amazon.com/systems-manager/latest/userguide/troubleshooting-ssm-agent.html
 
 ## Important rollout guard
 
@@ -31,7 +31,7 @@ In EC2 → Instances → select the CloudMonitor instance → Tags, add:
 |---|---|
 | `CloudMonitor` | `production` |
 
-The GitHub deployment role's `ssm:SendCommand` permission should be restricted to the intended EC2 instance and this tag.
+The GitHub deployment role's `ssm:SendCommand` permission should be restricted to the intended EC2 instance and this tag. The workflow polls for up to 30 minutes and sets a 35-minute GitHub job timeout to allow image build and health-check time.
 
 ### 2. Give the EC2 instance permission to use SSM
 
@@ -164,7 +164,7 @@ The region is set in the workflow to `ap-southeast-2`. Consider adding required 
 2. Select `oidc-check` first. Record the printed OIDC subject and create the exact IAM trust policy.
 3. Configure the EC2 instance role, SSM Agent connectivity, EC2 tag, GitHub deployment role, and GitHub Environment variables.
 4. Run `ssm-preflight`. It must show the EC2 managed node as Online and complete the harmless read-only command.
-5. Run `deploy` with `confirm_production=true` and complete any GitHub Environment approval. Verify the public application and PostgreSQL data after the run.
+5. Run `deploy` with `confirm_production=true` and complete any GitHub Environment approval. Verify the public application from outside EC2 and verify PostgreSQL data/persistence using a known non-sensitive application-level check. The workflow's health probes run against localhost on EC2.
 6. Use `rollback` with explicit confirmation if rollback is required.
 7. Only after the first successful SSM deployment and rollback procedure are reviewed should a follow-up PR restore automatic deployment on pushes to `main`.
 
@@ -175,7 +175,7 @@ The region is set in the workflow to `ap-southeast-2`. Consider adding required 
 - It checks that `/home/ubuntu/cloud_monitor/.env` exists and is not Git-tracked; it never prints the file contents.
 - It uses `docker compose config --quiet`, `build`, and `up -d --remove-orphans`.
 - It does **not** use `docker compose down -v`, delete volumes, or recreate PostgreSQL storage.
-- The deploy operation records the previous Git revision under `/var/lib/cloudmonitor/` and attempts a source/build rollback if deployment or local health checks fail.
+- The deploy operation records the previous Git revision under `/var/lib/cloudmonitor/` and attempts a source/build rollback if deployment or local health checks fail. This is a **code/config rollback only**: it does not restore PostgreSQL data or reverse database schema migrations. Keep schema changes backward-compatible across rollback, and take/verify a separate database backup before any release that changes schema or data.
 - Keep SSH access available for trusted administration until SSM is Online, the read-only preflight succeeds, and the required break-glass access method has been tested.
 - No AWS resources are changed by merging this workflow/documentation PR. Actual AWS configuration and production deployment remain separate, deliberate steps.
 
