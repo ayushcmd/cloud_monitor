@@ -86,6 +86,8 @@ jobs:
           print("OIDC issuer:", claims.get("iss"))
           print("OIDC audience:", claims.get("aud"))
           print("OIDC subject:", claims.get("sub"))
+          if claims.get("iss") != "https://token.actions.githubusercontent.com":
+              raise SystemExit("Unexpected OIDC issuer.")
           aud = claims.get("aud")
           if aud != "sts.amazonaws.com" and not (isinstance(aud, list) and "sts.amazonaws.com" in aud):
               raise SystemExit("Unexpected OIDC audience.")
