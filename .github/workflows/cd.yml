@@ -94,7 +94,6 @@ jobs:
           PY
 
       - name: Configure AWS credentials using GitHub OIDC
-        if: inputs.operation != 'oidc-check'
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
@@ -102,21 +101,26 @@ jobs:
           role-session-name: CloudMonitor-SSM-${{ github.run_id }}
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
 
-      - name: Verify AWS identity and SSM managed-node status
-        if: inputs.operation != 'oidc-check'
+      - name: Verify AWS role assumption and optional SSM managed-node status
+        if: inputs.operation != 'oidc-check' || success()
         shell: bash
         run: |
           set -euo pipefail
           ACTUAL_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
           [[ "$ACTUAL_ACCOUNT" == "$AWS_ACCOUNT_ID" ]] || { echo "::error::Unexpected AWS account."; exit 1; }
-          PING_STATUS="$(aws ssm describe-instance-information \
-            --filters "Key=InstanceIds,Values=${EC2_INSTANCE_ID}" \
-            --query 'InstanceInformationList[0].PingStatus' --output text)"
-          [[ "$PING_STATUS" == "Online" ]] || {
-            echo "::error::EC2 is not Online in SSM (status: $PING_STATUS). Fix instance role, SSM Agent, and outbound HTTPS before deploying."
-            exit 1
-          }
-          echo "Expected AWS account verified; EC2 is Online in Systems Manager."
+          ACTUAL_ARN="$(aws sts get-caller-identity --query Arn --output text)"
+          echo "GitHub OIDC successfully assumed the configured AWS role: $ACTUAL_ARN"
+
+          if [[ "$OPERATION" != "oidc-check" ]]; then
+            PING_STATUS="$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${EC2_INSTANCE_ID}" \
+              --query 'InstanceInformationList[0].PingStatus' --output text)"
+            [[ "$PING_STATUS" == "Online" ]] || {
+              echo "::error::EC2 is not Online in SSM (status: $PING_STATUS). Fix instance role, SSM Agent, and outbound HTTPS before deploying."
+              exit 1
+            }
+            echo "EC2 is Online in Systems Manager."
+          fi
 
       - name: Run SSM preflight, deployment, or rollback
         if: inputs.operation != 'oidc-check'
@@ -128,11 +132,9 @@ jobs:
               REMOTE_SCRIPT="$(cat <<'REMOTE'
           set -Eeuo pipefail
           DEPLOY_DIR="/home/ubuntu/cloud_monitor"
-          git config --global --add safe.directory "$DEPLOY_DIR" || true
           test -d "$DEPLOY_DIR"
           test -f "$DEPLOY_DIR/.env"
-          cd "$DEPLOY_DIR"
-          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+          if sudo -u ubuntu -- git -C "$DEPLOY_DIR" ls-files --error-unmatch .env >/dev/null 2>&1; then
             echo "ERROR: .env is tracked by Git. Refusing to continue."
             exit 1
           fi
@@ -150,20 +152,19 @@ jobs:
               REMOTE_SCRIPT="$(cat <<'REMOTE'
           set -Eeuo pipefail
           DEPLOY_DIR="/home/ubuntu/cloud_monitor"
-          git config --global --add safe.directory "$DEPLOY_DIR" || true
-          cd "$DEPLOY_DIR"
-          test -f .env
-          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+          test -d "$DEPLOY_DIR"
+          test -f "$DEPLOY_DIR/.env"
+          if sudo -u ubuntu -- git -C "$DEPLOY_DIR" ls-files --error-unmatch .env >/dev/null 2>&1; then
             echo "ERROR: .env is tracked by Git. Refusing to deploy."
             exit 1
           fi
 
-          PREVIOUS_SHA="$(git rev-parse HEAD)"
+          PREVIOUS_SHA="$(sudo -u ubuntu -- git -C "$DEPLOY_DIR" rev-parse HEAD)"
           rollback_on_error() {
             local rc=$?
             trap - ERR
             echo "Deployment failed; attempting rollback to ${PREVIOUS_SHA}."
-            git checkout -B main "$PREVIOUS_SHA" || true
+            sudo -u ubuntu -- git -C "$DEPLOY_DIR" checkout -B main "$PREVIOUS_SHA" || true
             sudo -n docker compose -f docker-compose.prod.yml build backend frontend || true
             sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans || true
             exit "$rc"
@@ -172,9 +173,9 @@ jobs:
 
           sudo -n install -d -m 0750 /var/lib/cloudmonitor
           printf '%s\n' "$PREVIOUS_SHA" | sudo -n tee /var/lib/cloudmonitor/previous-deploy-sha >/dev/null
-          git fetch --prune origin main
-          git checkout -B main origin/main
-          DEPLOY_SHA="$(git rev-parse HEAD)"
+          sudo -u ubuntu -- git -C "$DEPLOY_DIR" fetch --prune origin +refs/heads/main:refs/remotes/origin/main
+          sudo -u ubuntu -- git -C "$DEPLOY_DIR" checkout -B main origin/main
+          DEPLOY_SHA="$(sudo -u ubuntu -- git -C "$DEPLOY_DIR" rev-parse HEAD)"
 
           sudo -n docker compose -f docker-compose.prod.yml config --quiet
           sudo -n docker compose -f docker-compose.prod.yml pull prometheus node-exporter alertmanager
@@ -226,28 +227,27 @@ jobs:
               REMOTE_SCRIPT="$(cat <<'REMOTE'
           set -Eeuo pipefail
           DEPLOY_DIR="/home/ubuntu/cloud_monitor"
-          git config --global --add safe.directory "$DEPLOY_DIR" || true
-          cd "$DEPLOY_DIR"
-          test -f .env
-          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+          test -d "$DEPLOY_DIR"
+          test -f "$DEPLOY_DIR/.env"
+          if sudo -u ubuntu -- git -C "$DEPLOY_DIR" ls-files --error-unmatch .env >/dev/null 2>&1; then
             echo "ERROR: .env is tracked by Git. Refusing to roll back."
             exit 1
           fi
-          CURRENT_SHA="$(git rev-parse HEAD)"
+          CURRENT_SHA="$(sudo -u ubuntu -- git -C "$DEPLOY_DIR" rev-parse HEAD)"
           ROLLBACK_SHA="$(sudo -n cat /var/lib/cloudmonitor/previous-deploy-sha)"
-          git cat-file -e "${ROLLBACK_SHA}^{commit}"
+          sudo -u ubuntu -- git -C "$DEPLOY_DIR" cat-file -e "${ROLLBACK_SHA}^{commit}"
 
           restore_current_on_error() {
             local rc=$?
             trap - ERR
-            git checkout -B main "$CURRENT_SHA" || true
+            sudo -u ubuntu -- git -C "$DEPLOY_DIR" checkout -B main "$CURRENT_SHA" || true
             sudo -n docker compose -f docker-compose.prod.yml build backend frontend || true
             sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans || true
             exit "$rc"
           }
           trap restore_current_on_error ERR
 
-          git checkout -B main "$ROLLBACK_SHA"
+          sudo -u ubuntu -- git -C "$DEPLOY_DIR" checkout -B main "$ROLLBACK_SHA"
           sudo -n docker compose -f docker-compose.prod.yml config --quiet
           sudo -n docker compose -f docker-compose.prod.yml build backend frontend
           sudo -n docker compose -f docker-compose.prod.yml up -d --remove-orphans
