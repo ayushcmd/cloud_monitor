@@ -1,6 +1,6 @@
 # Issue #9 — Migrate EC2 deployment from SSH to AWS Systems Manager
 
-**Status:** SSM workflow prepared on a feature branch. AWS account configuration and live EC2 verification are still required before production deployment.
+**Status:** SSM workflow prepared on a feature branch. The existing EC2 instance role is attached, SSM reports the instance Online, the GitHub OIDC provider and deployment role exist, and the repository production environment has the three AWS variables plus a main-only deployment rule. GitHub OIDC role assumption and Run Command execution still require workflow verification.
 
 ## Why the SSH deployment is failing
 
@@ -14,7 +14,7 @@ The updated `.github/workflows/cd.yml` is intentionally **workflow_dispatch-only
 
 Available operations:
 
-1. `oidc-check` — prints the workflow's OIDC issuer, audience, and subject only; it does not call AWS.
+1. `oidc-check` — requests a GitHub OIDC token, prints only issuer/audience/subject claims (never the token), assumes the configured AWS role with STS, and verifies the AWS account/caller identity. It does not send an SSM command or change EC2.
 2. `ssm-preflight` — authenticates to AWS, verifies the configured EC2 instance is Online in SSM, and sends a read-only preflight command.
 3. `deploy` — requires `confirm_production=true`; deploys `origin/main` through SSM and runs local frontend/backend/Prometheus health checks on EC2.
 4. `rollback` — requires `confirm_production=true`; restores the previous Git revision recorded on EC2.
@@ -23,62 +23,32 @@ After one successful controlled SSM deployment and operational review, a follow-
 
 ## AWS setup checklist
 
-### 1. Tag the production EC2 instance
+### 1. Confirm the existing EC2 SSM registration
 
-In EC2 → Instances → select the CloudMonitor instance → Tags, add:
+The CloudMonitor EC2 instance already has CloudMonitorEC2SSMRole with AmazonSSMManagedInstanceCore, and Fleet Manager reports the instance as Online. The GitHub role policy is restricted to the exact EC2 instance ARN, so an EC2 tag is not required for this implementation. The workflow polls for up to 30 minutes and sets a 35-minute GitHub job timeout to allow image build and health-check time.
 
-| Key | Value |
-|---|---|
-| `CloudMonitor` | `production` |
+### 2. EC2 instance profile — completed
 
-The GitHub deployment role's `ssm:SendCommand` permission should be restricted to the intended EC2 instance and this tag. The workflow polls for up to 30 minutes and sets a 35-minute GitHub job timeout to allow image build and health-check time.
+The existing CloudMonitor EC2 instance has CloudMonitorEC2SSMRole attached with the AWS-managed AmazonSSMManagedInstanceCore policy. SSM Agent diagnostics passed, and the instance is listed as Online in Fleet Manager. No further EC2 role change is needed.
 
-### 2. Give the EC2 instance permission to use SSM
+### 3. SSM Agent and network connectivity — completed
 
-Create an IAM role trusted by the **EC2** service, for example `CloudMonitorEC2SSMRole`. Attach the AWS-managed policy:
+The Ubuntu 24.04 host has SSM Agent 3.3.4793.0 running and enabled. ssm-cli get-diagnostics --output table reported success for IMDS, SSM, EC2 Messages, SSM Messages, S3, KMS, Logs, Monitoring, AWS role credentials, and agent service checks. Fleet Manager subsequently showed the CloudMonitor instance as Online. No inbound SSH change is required for GitHub-hosted runners to use SSM. Keep administrator SSH access as a break-glass path until the new deployment route is fully tested.
 
-`AmazonSSMManagedInstanceCore`
+### 4. GitHub OIDC identity provider — already exists
 
-Then attach this role to the existing EC2 instance:
+The AWS account already has the OpenID Connect provider token.actions.githubusercontent.com with audience sts.amazonaws.com. Reuse it; do not create a duplicate or delete the existing provider.
 
-EC2 → Instances → select instance → Actions → Security → Modify IAM role → choose `CloudMonitorEC2SSMRole` → Update IAM role.
+### 5. GitHub deployment role trust policy — already created
 
-Do not replace or remove other required instance permissions without auditing them first. This operation must not recreate the EC2 instance or its EBS volume.
-
-AWS documents the instance-profile path and policy attachment steps here: https://docs.aws.amazon.com/systems-manager/latest/userguide/setup-instance-permissions.html
-
-### 3. Verify SSM Agent and network connectivity
-
-On the existing Ubuntu 24.04 host, verify the SSM Agent is installed and running before installing or replacing anything. Depending on the package source, the service may be named `amazon-ssm-agent` or `snap.amazon-ssm-agent.amazon-ssm-agent`.
-
-The instance needs outbound TCP 443 connectivity to the regional Systems Manager endpoints, including:
-
-- `ssm.ap-southeast-2.amazonaws.com`
-- `ssmmessages.ap-southeast-2.amazonaws.com`
-
-This can be provided by its existing outbound internet route/NAT or suitable Systems Manager VPC endpoints. Do not open inbound SSH to GitHub-hosted runner IP ranges for SSM. Keep existing administrator SSH access as a break-glass path until SSM and any required Session Manager access are verified.
-
-AWS endpoint requirements: https://docs.aws.amazon.com/systems-manager/latest/userguide/troubleshooting-ssm-agent.html
-
-### 4. Create the GitHub OIDC identity provider
-
-In AWS IAM → Identity providers, create an OpenID Connect provider:
-
-- Provider URL: `https://token.actions.githubusercontent.com`
-- Audience: `sts.amazonaws.com`
-
-Do not create or store long-lived AWS access keys in GitHub.
-
-### 5. Create the GitHub deployment role trust policy
-
-Create an IAM role trusted by the GitHub OIDC provider. The workflow runs in GitHub Environment `production`, so the `sub` claim must be scoped to that environment. Use the **exact subject printed by the workflow's `oidc-check` operation**.
+The role CloudMonitorGitHubDeployRole exists and trusts the GitHub OIDC provider for the immutable CloudMonitor repository identity and GitHub Environment production. The expected subject is repo:ayushcmd@252997256/cloud_monitor@1419373799:environment:production. The workflow's oidc-check now verifies the emitted subject and performs an actual AWS STS role assumption. If the STS step fails, compare the emitted subject with the role trust policy before changing either.
 
 Depending on the repository's OIDC subject-claim setting, the subject may use one of these forms:
 
 - Legacy: `repo:ayushcmd/cloud_monitor:environment:production`
 - Immutable: `repo:ayushcmd@252997256/cloud_monitor@1419373799:environment:production`
 
-The workflow's `oidc-check` output is authoritative. Do not allow repository-wide or branch-wide wildcards.
+The environment's deployment branch rule allows main only. Do not allow repository-wide or branch-wide wildcards in the IAM trust policy.
 
 Example trust policy (replace the account ID and subject with the actual values):
 
@@ -105,7 +75,7 @@ Example trust policy (replace the account ID and subject with the actual values)
 
 ### 6. Attach the deployment role permissions
 
-The GitHub role should be limited to `AWS-RunShellScript` on the CloudMonitor EC2 instance, plus the read operations needed to verify the command. Replace account and instance placeholders. Review the policy against the current AWS service authorization reference before attaching.
+The GitHub role is limited to AWS-RunShellScript on the exact CloudMonitor EC2 instance, plus the read operations needed to verify the command. The policy attached in AWS uses the actual account and instance identifiers.
 
 ```json
 {
@@ -127,12 +97,7 @@ The GitHub role should be limited to `AWS-RunShellScript` on the CloudMonitor EC
       "Sid": "SendOnlyToCloudMonitorInstance",
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
-      "Resource": "arn:aws:ec2:ap-southeast-2:<AWS_ACCOUNT_ID>:instance/<EC2_INSTANCE_ID>",
-      "Condition": {
-        "StringEquals": {
-          "ssm:resourceTag/CloudMonitor": "production"
-        }
-      }
+      "Resource": "arn:aws:ec2:ap-southeast-2:<AWS_ACCOUNT_ID>:instance/<EC2_INSTANCE_ID>"
     },
     {
       "Sid": "ReadCommandInvocationResult",
@@ -161,9 +126,8 @@ The region is set in the workflow to `ap-southeast-2`. Consider adding required 
 ## Runbook after this PR is merged
 
 1. Open Actions → **CloudMonitor CD — Deploy to AWS EC2 via SSM** → Run workflow.
-2. Select `oidc-check` first. Record the printed OIDC subject and create the exact IAM trust policy.
-3. Configure the EC2 instance role, SSM Agent connectivity, EC2 tag, GitHub deployment role, and GitHub Environment variables.
-4. Run `ssm-preflight`. It must show the EC2 managed node as Online and complete the harmless read-only command.
+2. Select `oidc-check`. Confirm the emitted OIDC subject matches the IAM trust policy and that STS returns the expected AWS account and assumed role.
+3. Run `ssm-preflight`. It must confirm the EC2 managed node is Online and complete the harmless read-only command.
 5. Run `deploy` with `confirm_production=true` and complete any GitHub Environment approval. Verify the public application from outside EC2 and verify PostgreSQL data/persistence using a known non-sensitive application-level check. The workflow's health probes run against localhost on EC2.
 6. Use `rollback` with explicit confirmation if rollback is required.
 7. Only after the first successful SSM deployment and rollback procedure are reviewed should a follow-up PR restore automatic deployment on pushes to `main`.
@@ -183,8 +147,8 @@ The region is set in the workflow to `ap-southeast-2`. Consider adding required 
 
 | Acceptance criterion | Status |
 |---|---|
-| EC2 registered and Online in SSM | Pending AWS-side setup/verification |
-| GitHub OIDC can assume the deployment role | Pending AWS trust policy and `oidc-check` |
+| EC2 registered and Online in SSM | Complete — Fleet Manager reports Online |
+| GitHub OIDC provider, role, and trust policy | Configured — live STS assumption pending `oidc-check` |
 | GitHub invokes the approved SSM command | Pending `ssm-preflight` |
 | Runner no longer requires inbound SSH | Implemented in the prepared workflow; pending live preflight |
 | Production deployment and health checks succeed | Pending controlled deployment |
