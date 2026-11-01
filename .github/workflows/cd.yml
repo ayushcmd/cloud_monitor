@@ -102,7 +102,6 @@ jobs:
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
 
       - name: Verify AWS role assumption and optional SSM managed-node status
-        if: inputs.operation != 'oidc-check' || success()
         shell: bash
         run: |
           set -euo pipefail
@@ -138,6 +137,7 @@ jobs:
             echo "ERROR: .env is tracked by Git. Refusing to continue."
             exit 1
           fi
+          cd "$DEPLOY_DIR"
           command -v git >/dev/null
           command -v curl >/dev/null
           sudo -n docker --version
@@ -158,6 +158,7 @@ jobs:
             echo "ERROR: .env is tracked by Git. Refusing to deploy."
             exit 1
           fi
+          cd "$DEPLOY_DIR"
 
           PREVIOUS_SHA="$(sudo -u ubuntu -- git -C "$DEPLOY_DIR" rev-parse HEAD)"
           rollback_on_error() {
@@ -233,6 +234,7 @@ jobs:
             echo "ERROR: .env is tracked by Git. Refusing to roll back."
             exit 1
           fi
+          cd "$DEPLOY_DIR"
           CURRENT_SHA="$(sudo -u ubuntu -- git -C "$DEPLOY_DIR" rev-parse HEAD)"
           ROLLBACK_SHA="$(sudo -n cat /var/lib/cloudmonitor/previous-deploy-sha)"
           sudo -u ubuntu -- git -C "$DEPLOY_DIR" cat-file -e "${ROLLBACK_SHA}^{commit}"
