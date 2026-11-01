@@ -126,4 +126,4 @@ def test_health_and_metrics_endpoints_intact():
 
     res_metrics = client.get("/metrics")
     assert res_metrics.status_code == 200
-    assert b"cloudmonitor_requests_total" in res_metrics.content or b"process_virtual_memory_bytes" in res_metrics.content
+    assert b"cloudmonitor_http_requests_total" in res_metrics.content
