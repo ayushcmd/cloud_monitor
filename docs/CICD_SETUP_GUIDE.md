@@ -1,170 +1,194 @@
-# CloudMonitor — CI/CD Pipeline Setup & Operations Guide
+# CloudMonitor — CI/CD Setup and Operations
 
-This guide describes the automated continuous integration (CI) and continuous deployment (CD) pipeline configured for the **CloudMonitor** observability platform.
+**Last verified:** 1 November 2026  
+**Repository:** ayushcmd/cloud_monitor  
+**Production deployment:** GitHub Actions + AWS OIDC + Systems Manager Run Command  
+**AWS Region:** ap-southeast-2
 
----
+This guide describes the CI and the current production CD workflow. The older SSH-based runner-to-EC2 deployment is not the active delivery path.
 
-## 1. Pipeline Architecture & Workflow Files
+## 1. Workflow files
 
-The pipeline consists of two GitHub Actions workflow files located in `.github/workflows/`:
-
-```
+~~~text
 .github/
 └── workflows/
-    ├── ci.yml    # Continuous Integration (Lint, Test, Build, Syntax Validation)
-    └── cd.yml    # Continuous Deployment (Automated deployment to AWS EC2)
-```
+    ├── ci.yml    # Test, build and Compose validation
+    └── cd.yml    # Manual SSM production operations
+~~~
 
-### A. CI Workflow (`ci.yml`)
-- **Trigger**: Every `push` and `pull_request` targeting `main`, `master`, or `cloudmonitor-integration`, plus manual execution via `workflow_dispatch`.
-- **Jobs**:
-  1. `backend-test`:
-     - Sets up Python 3.12 with pip caching.
-     - Installs dependencies from `backend/requirements.txt` and `agent/requirements.txt`.
-     - Executes the Python test suite across both application endpoints and agent collector modules (`pytest tests/ agent/tests/`).
-  2. `frontend-build`:
-     - Sets up Node.js 20 with npm caching.
-     - Runs `npm ci` for reproducible dependency installations.
-     - Builds the production React 18 / Vite bundle and validates that `dist/index.html` was generated.
-  3. `docker-compose-validate`:
-     - Validates the syntax and structure of both `docker-compose.yml` (development) and `docker-compose.prod.yml` (production) via `docker compose config`.
+### CI workflow
 
-### B. CD Workflow (`cd.yml`)
-- **Trigger**: Automatically on `push` to the `main` branch after CI tests pass, or manually via `workflow_dispatch`.
-- **Concurrency**: Guarded with `group: production-deployment, cancel-in-progress: false` to prevent overlapping deployments.
-- **Safety**:
-  - Never drops database volumes or runs `docker compose down -v`.
-  - Never touches or prints private keys or sensitive credentials.
-  - Deploys idempotently using `docker-compose.prod.yml up -d --remove-orphans`.
-  - Performs an automated health check against `/health` and `/prom/api/v1/targets` to verify service availability before completing.
+The CI workflow runs on pushes and pull requests for the configured branches, and can also be run manually.
 
----
+Jobs:
+1. **Backend & Agent Test Suite** — Python 3.12, installs backend/agent requirements and runs pytest for tests/ and agent/tests/.
+2. **Frontend Build & Asset Verification** — Node.js 20, npm ci, npm run build and verifies frontend/dist/index.html.
+3. **Docker Compose Specification Validation** — validates docker-compose.yml and docker-compose.prod.yml.
 
-## 2. Required GitHub Repository Secrets
+A green CI run verifies the tested commit against those jobs. Review workflow annotations as well as the final status; warnings may remain even when checks pass.
 
-To enable automated deployment to your AWS EC2 instance, configure the following secrets in GitHub:
+### CD workflow
 
-### A. Secret Configuration Scope
-You can configure these secrets under **Repository secrets** (recommended for simplicity) or under a GitHub **Environment** named `production`:
+The active workflow is **CloudMonitor CD — Deploy to AWS EC2 via SSM**. It is currently manual-only through workflow_dispatch. CI runs on push/PR, but merging or pushing to main does not itself deploy production.
 
-1. **Option 1: Repository Secrets (Recommended)**:
-   - Navigate to: **GitHub Repository &rarr; Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret**
-2. **Option 2: Environment Secrets**:
-   - Navigate to: **GitHub Repository &rarr; Settings &rarr; Environments &rarr; New environment (Name: `production`) &rarr; Add Environment secret**
+The production job uses:
+- GitHub Environment: production
+- GitHub job permissions: contents: read and id-token: write
+- GitHub OIDC audience: sts.amazonaws.com
+- AWS role: CloudMonitorGitHubDeployRole
+- AWS Region: ap-southeast-2
+- SSM document: AWS-RunShellScript
+- EC2 role: CloudMonitorEC2SSMRole
+- Target: the configured CloudMonitor production EC2 instance
 
-> [!NOTE]
-> The CD workflow defines `environment: production`. GitHub Actions automatically checks environment-level secrets first; if not present, it seamlessly falls back to repository-level secrets.
+No long-lived AWS access key is required by this OIDC flow. The current SSM workflow does not use SSH private-key or known-host secrets.
 
-### B. Required Secret Definitions
+## 2. GitHub Environment configuration
 
-| Secret Name | Description | Example / Value |
-| :--- | :--- | :--- |
-| `EC2_HOST` | Public IPv4 address or DNS of your EC2 instance | `3.25.150.231` |
-| `EC2_USER` | SSH username for the Ubuntu instance | `ubuntu` |
-| `EC2_SSH_PRIVATE_KEY` | Entire content of your private SSH key (`cloudmonitor-key.pem`) | `-----BEGIN RSA PRIVATE KEY----- ... -----END RSA PRIVATE KEY-----` |
-| `EC2_SSH_KNOWN_HOSTS` | Verified public host key line for the EC2 server (enables strict SSH host verification) | `3.25.150.231 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEBsqrR6gAY2i/qk4kcm1Nycvq7I34j3nyUDEbM4uJpR` |
+Open repository **Settings** → **Environments** → **production**.
 
-> [!IMPORTANT]
-> - **EC2_SSH_PRIVATE_KEY**: Paste the private key in full, including the `-----BEGIN ...-----` and `-----END ...-----` headers. The pipeline automatically strips any Windows CRLF line endings.
-> - **EC2_SSH_KNOWN_HOSTS**: Unlike insecure configurations that set `StrictHostKeyChecking no`, our pipeline strictly validates the host key against `EC2_SSH_KNOWN_HOSTS` before sending credentials. This protects against Man-in-the-Middle (MITM) attacks.
+### Environment variables
 
-### How to Verify the EC2 Host Key Fingerprint
-You can cryptographically verify that the host key matches your AWS EC2 instance before adding it:
-1. Open the **AWS EC2 Management Console**.
-2. Go to **Instances**, select instance `3.25.150.231`.
-3. Click **Actions &rarr; Monitor and troubleshoot &rarr; Get system log**.
-4. Scroll to the SSH key generation output generated at first boot:
-   ```text
-   ec2: -----BEGIN SSH HOST KEY FINGERPRINTS-----
-   ec2: 256 SHA256:YnxBgREbLPFkl1UYCgSj+AdjO2VDvgEC+HE5SYyutm8 root@ip-172-31-0-221 (ED25519)
-   ec2: 256 SHA256:eX9Qj+sNVfqjyE6p5cvICC3g1UjN8zHQ6NOsf6+ko7g root@ip-172-31-0-221 (ECDSA)
-   ec2: -----END SSH HOST KEY FINGERPRINTS-----
-   ```
-5. Confirm that the ED25519 fingerprint matches `SHA256:YnxBgREbLPFkl1UYCgSj+AdjO2VDvgEC+HE5SYyutm8`.
+| Name | Purpose |
+|---|---|
+| AWS_ACCOUNT_ID | Expected 12-digit AWS account |
+| AWS_DEPLOY_ROLE_ARN | ARN of CloudMonitorGitHubDeployRole |
+| EC2_INSTANCE_ID | CloudMonitor production EC2 instance ID |
 
-### AWS Security Group Requirements
-- For GitHub-hosted runners to execute deployments, the EC2 instance's Security Group must allow inbound TCP traffic on **Port 22 (SSH)**.
-- Inbound source should be set to `0.0.0.0/0` (or GitHub Actions IP ranges from `https://api.github.com/meta`).
+The region is configured in cd.yml as ap-southeast-2.
 
-### Production `.env` File Guard
-- The CD pipeline requires that `/home/ubuntu/cloud_monitor/.env` already exists on the EC2 host.
-- It will **never** automatically copy `.env.production.example` over `.env`, and will halt deployment immediately if `.env` is absent. This protects production secrets, database credentials, and avoids accidental data corruption.
+### Deployment branch rule
 
----
+In **Deployment branches and tags**, use **Selected branches and tags** and allow main only. The IAM trust subject is scoped to the production Environment and must match the subject printed by the workflow's OIDC inspection step.
 
-## 3. Preparation Checklist for First Automated Deployment
+### Protection rules
 
-Follow these sequential steps to ensure a smooth first deployment:
+Required reviewers and wait timers were not enabled in the verified setup; administrator bypass was allowed. For stronger release governance, consider adding independent required reviewers and disabling administrator bypass if supported by the repository plan/settings.
 
-1. [ ] **Verify Server Inbound Rules**:
-   Ensure AWS Security Group for `3.25.150.231` allows Port 22 (SSH) and Port 80 (HTTP).
-2. [ ] **Verify Server Host Configuration**:
-   Ensure `/home/ubuntu/cloud_monitor/.env` exists on the EC2 instance with valid production secrets (`POSTGRES_PASSWORD`, `JWT_SECRET_KEY`, `DATABASE_URL`).
-3. [ ] **Add Required Secrets in GitHub**:
-   In GitHub repository settings (`Settings -> Secrets and variables -> Actions`), add `EC2_HOST`, `EC2_USER`, `EC2_SSH_PRIVATE_KEY`, and `EC2_SSH_KNOWN_HOSTS`.
-4. [ ] **Merge Fix Pull Request**:
-   Merge the audited remediation PR into `main`.
-5. [ ] **Monitor Deployment Run**:
-   In GitHub Actions, monitor the CD run. It will validate secrets, establish an SSH session with strict verification, pull/build images, restart containers idempotently, and execute bounded health checks on Frontend, Backend, and Prometheus targets.
+Legacy SSH secrets may remain in the Environment from the previous deployment. The current SSM workflow does not reference them. Search every workflow and script before removing any legacy value. Never reveal private key contents.
 
----
+## 3. AWS IAM components
 
-## 4. How Changes Flow to Production
+Two IAM roles have different responsibilities:
 
-```mermaid
-flowchart LR
-    Dev["Local Branch (cloudmonitor-integration)"] -->|git push| GH["GitHub: cloudmonitor-integration"]
-    GH -->|Triggers CI| CI["GitHub Actions: ci.yml (Tests & Builds)"]
-    CI -->|Create PR| PR["Pull Request: cloudmonitor-integration -> main"]
-    PR -->|Merge to main| CD["GitHub Actions: cd.yml (Deploy to EC2)"]
-    CD -->|SSH & Compose Up| EC2["AWS EC2 Host: http://3.25.150.231"]
-```
+| Role | Trusted entity | Purpose |
+|---|---|---|
+| CloudMonitorEC2SSMRole | EC2 service | Attached to the production instance; includes AmazonSSMManagedInstanceCore |
+| CloudMonitorGitHubDeployRole | GitHub OIDC provider | Assumed by GitHub Actions; permits the approved SSM operation on the CloudMonitor EC2 target |
 
-1. **Develop and test locally** on the integration branch (`cloudmonitor-integration`).
-2. **Push to GitHub**: `git push origin cloudmonitor-integration`.
-3. **CI verifies the commit**: Checks that all 24 backend/agent tests pass, the frontend builds cleanly, and Compose specifications are valid.
-4. **Open a Pull Request**: Merge `cloudmonitor-integration` into `main`.
-5. **CD deploys automatically**: GitHub Actions connects securely to EC2, updates the application services, reloads Nginx, and validates the health check endpoints.
+The OIDC provider is token.actions.githubusercontent.com with audience sts.amazonaws.com. The GitHub deployment role trust policy must match the exact production Environment subject from the workflow's OIDC claim inspection. Do not use a broad repository or organization wildcard.
 
----
+The inline policy CloudMonitorSSMDeployPolicy permits the required SSM describe, approved RunShellScript send-command and command-invocation read operations. The send-command resource scope is restricted to the AWS-RunShellScript document and the specific CloudMonitor instance. Do not attach AdministratorAccess.
 
-## 5. Operational Runbook
+For the full click-by-click AWS Console procedure, example trust policy, policy JSON and instance-role attachment, see:
 
-### Inspecting Workflow Runs & Logs
-1. Go to the **Actions** tab on your GitHub repository: `https://github.com/ayushcmd/cloud_monitor/actions`.
-2. Select any workflow run to inspect step-by-step logs and execution times.
-3. If a step fails, the log output displays the exact error message.
+**[AWS IAM, GitHub OIDC, SSM and Production Setup](AWS_IAM_OIDC_SSM_PRODUCTION_SETUP.md)**
 
-### Diagnosing Common Pipeline Failures
-- **Backend Test Failure**:
-  - Run tests locally or inside the backend container: `PYTHONPATH=. pytest tests/ agent/tests/`.
-  - Verify that mock objects or required test environment variables are properly defined.
-- **Frontend Build Failure**:
-  - Run `npm run build` inside `frontend/`.
-  - Check for JSX syntax errors, unresolved imports, or missing dependencies in `package.json`.
-- **SSH Connectivity Failure (`cd.yml`)**:
-  - Ensure the EC2 instance is running and has public IPv4 `3.25.150.231`.
-  - Check that the AWS Security Group allows inbound SSH (port 22) from GitHub Actions or the relevant CIDR.
-  - Verify that `EC2_SSH_PRIVATE_KEY` matches the authorized public key on the EC2 server (`~/.ssh/authorized_keys`).
-- **Health Check Failure**:
-  - Inspect running container health on EC2: `ssh -i <key> ubuntu@3.25.150.231 "sudo docker ps"`.
-  - Check backend logs: `sudo docker logs --tail 50 cloudmonitor-backend`.
+## 4. Run the SSM workflow
 
-### Safe Rollback Procedure
-If a bad commit was deployed and needs to be reverted:
-1. **Revert the commit on GitHub**:
-   ```bash
-   git revert <bad-commit-hash>
-   git push origin main
-   ```
-2. **Manual Emergency Rollback on EC2**:
-   If GitHub Actions is unreachable, roll back directly on the host without data loss:
-   ```bash
-   ssh -i cloudmonitor-key.pem ubuntu@3.25.150.231
-   cd /home/ubuntu/cloud_monitor
-   git checkout <previous-known-good-commit>
-   sudo docker compose -f docker-compose.prod.yml build backend frontend
-   sudo docker compose -f docker-compose.prod.yml up -d
-   ```
-   > [!CAUTION]
-   > Never run `docker compose down -v` on EC2. The `-v` flag deletes the named volume `cloudmonitor-prod_postgres_data`, which contains user accounts, enrolled agents, and telemetry records.
+Open repository **Actions** → **CloudMonitor CD — Deploy to AWS EC2 via SSM** → **Run workflow**. Select workflow source main.
+
+Available operations:
+
+| Operation | Use | Production confirmation |
+|---|---|---|
+| oidc-check | Validate OIDC claims and AWS STS role assumption | No |
+| ssm-preflight | Confirm EC2 Online in SSM and inspect Docker/Compose state without deployment | No |
+| deploy | Fetch main, build/update production services and run health checks | Required |
+| rollback | Restore the previous recorded Git revision and rebuild application services | Required |
+
+### Recommended production release sequence
+
+1. Confirm the intended code is merged to main and CI is green.
+2. Run oidc-check and confirm the issuer, audience, subject and assumed role.
+3. Run ssm-preflight and confirm the CloudMonitor EC2 managed node is Online.
+4. Verify production .env exists on EC2, is not Git-tracked and passes configuration validation.
+5. Verify a recent PostgreSQL backup exists and can be read.
+6. Check EC2 disk/memory headroom and production Compose configuration.
+7. Run deploy and check the production confirmation input.
+8. Watch the SSM command output inside the workflow.
+9. Verify frontend, backend, Prometheus targets and PostgreSQL persistence independently.
+
+Do not run deploy to test connectivity. Use oidc-check and ssm-preflight for non-deploying checks.
+
+## 5. What deployment changes on EC2
+
+The current deployment script:
+1. Checks the production directory and .env file.
+2. Refuses to continue if .env is tracked by Git.
+3. Records the previous commit in /var/lib/cloudmonitor/previous-deploy-sha.
+4. Fetches origin/main and checks out origin/main.
+5. Validates production Compose configuration.
+6. Pulls Prometheus, Node Exporter and Alertmanager images.
+7. Builds backend and frontend images on the EC2 host.
+8. Runs docker compose up -d --remove-orphans.
+9. Waits for frontend HTTP 200.
+10. Waits for backend /health to report status=healthy.
+11. Waits for the required Prometheus targets to report up.
+12. Records the successful revision in /var/lib/cloudmonitor/last-successful-deploy-sha.
+
+The script does not run docker compose down -v. It does not intentionally delete or recreate the PostgreSQL volume.
+
+## 6. Rollback
+
+Rollback is a deliberate production operation:
+1. Open the SSM CD workflow and select **Run workflow**.
+2. Choose main and operation rollback.
+3. Check the production confirmation input.
+4. Start the workflow and inspect SSM output.
+5. Verify application health after rollback.
+
+The workflow restores the previous Git revision, rebuilds backend/frontend and runs Compose. This is a code/build rollback only. It does not restore PostgreSQL data, reverse Alembic migrations or revert arbitrary data changes. Take a database backup before schema-changing releases and keep schema changes backward-compatible where possible.
+
+## 7. Production safeguards
+
+- Keep /home/ubuntu/cloud_monitor/.env outside Git and with restrictive permissions.
+- Never print or commit secrets.
+- Do not replace production .env with an example file.
+- Preserve named PostgreSQL volume cloudmonitor-prod_postgres_data.
+- Never run docker compose down -v on production.
+- Keep administrator access restricted; SSM deployment removes the runner's need for inbound SSH but does not itself establish human Session Manager access.
+- Do not claim HTTPS is active solely because security group port 443 is open. TLS remains a separate security task.
+- Production Prometheus read access remains a separate hardening task.
+
+## 8. Verified production deployment
+
+The first controlled SSM production deployment completed successfully on 1 November 2026.
+
+| Check | Verified result |
+|---|---|
+| Deployed commit | f536dad97518a761c12b83ff578ff3194e9ed04f |
+| Last-successful-deploy SHA | Matched deployed commit |
+| Frontend | HTTP 200 |
+| Backend | Healthy |
+| PostgreSQL | Healthy |
+| Prometheus | Healthy |
+| Alertmanager | Running |
+| Node Exporter | Running |
+| Prometheus target pools | alertmanager, cloudmonitor-backend, node-exporter and prometheus all up |
+| PostgreSQL volume | cloudmonitor-prod_postgres_data preserved |
+
+The migration is tracked as complete in [Issue #9](https://github.com/ayushcmd/cloud_monitor/issues/9). Broader production-security work remains in [Issue #12](https://github.com/ayushcmd/cloud_monitor/issues/12).
+
+## 9. Troubleshooting quick reference
+
+| Symptom | Check |
+|---|---|
+| EC2 not Online in SSM | Attached EC2 instance profile, AmazonSSMManagedInstanceCore, SSM Agent, IMDS and outbound HTTPS |
+| OIDC AccessDenied | Exact issuer/audience/subject, IAM trust JSON, production Environment and role ARN |
+| SSM command fails | Open SSM command ID and inspect instance invocation Output and Error |
+| not a git repository | Confirm /home/ubuntu/cloud_monitor contains .git and origin is correct |
+| set: Illegal option -o pipefail | Run Bash scripts through bash -lc, not the default POSIX /bin/sh |
+| confirm_production error | Select deploy/rollback and check the confirmation input |
+| backend unhealthy | Inspect backend logs, configuration validation and database connectivity |
+| Prometheus target down | Inspect target status, Docker service names, network and scrape configuration |
+| database/rollback concern | Stop; preserve volume and backup. Code rollback does not restore or reverse database changes |
+
+## 10. Related documentation
+
+- [Detailed AWS IAM/OIDC/SSM setup](AWS_IAM_OIDC_SSM_PRODUCTION_SETUP.md)
+- [SSM deployment migration record](SSM_DEPLOYMENT_MIGRATION.md)
+- [Production AWS operations](AWS_DEPLOYMENT_AND_OPERATIONS.md)
+- [GitHub Actions SSM workflow](../.github/workflows/cd.yml)
+- [CI workflow](../.github/workflows/ci.yml)
+- [Production Compose](../docker-compose.prod.yml)

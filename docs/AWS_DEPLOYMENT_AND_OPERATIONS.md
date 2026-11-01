@@ -40,9 +40,9 @@ The current design runs Docker Compose on one EC2 host. PostgreSQL runs as a con
 | Optional TLS proxy | Caddy behind the tls Compose profile |
 | Database | PostgreSQL 16 Alpine |
 | Named database volume | cloudmonitor-prod_postgres_data |
-| Deployment mechanism in workflow | GitHub Actions with SSH |
-| Known pipeline issue | Recent GitHub-hosted runner-to-EC2 SSH connectivity checks failed |
-| Planned alternative | AWS Systems Manager migration, tracked in [issue #9](https://github.com/ayushcmd/cloud_monitor/issues/9) |
+| Deployment mechanism in workflow | GitHub Actions OIDC + AWS Systems Manager Run Command |
+| Previous pipeline issue | GitHub-hosted runner-to-EC2 SSH connectivity timed out; replaced for deployment by SSM |
+| Current deployment path | SSM migration completed and verified; see [Issue #9](https://github.com/ayushcmd/cloud_monitor/issues/9) |
 
 The public IP and region are project details supplied during deployment troubleshooting. Before acting, confirm the EC2 instance ID, current state, attached storage, security groups, DNS and active containers. Do not assume the current IP is an Elastic IP or that optional AWS components are active without checking the account.
 
@@ -215,40 +215,66 @@ Node Exporter exposes host OS metrics over the internal Docker network. cAdvisor
 
 Grafana is configured in the local Compose stack, not in the current production Compose file. Alertmanager's routes and receiver names are defined, but webhook lists are empty. External email, chat, or webhook delivery should be considered unconfigured until a receiver is added and a test notification is observed.
 
-## 9. CI/CD status and planned Systems Manager migration
+## 9. CI/CD status — GitHub Actions with AWS Systems Manager
 
 ### CI workflow
 
-The repository's .github/workflows/ci.yml includes:
-- Python 3.12 setup and dependency installation
-- pytest for backend and agent tests
-- Node.js 20 and npm ci
-- frontend production build and output verification
-- validation of both local and production Compose configurations
+The repository's .github/workflows/ci.yml runs on configured branch pushes and pull requests, with manual workflow_dispatch support. It has three jobs:
 
-Check the specific GitHub Actions run before reporting that a commit passed CI.
+- Backend & Agent Test Suite: Python 3.12, installs backend/agent dependencies and runs pytest for tests/ and agent/tests/.
+- Frontend Build & Asset Verification: Node.js 20, npm ci, npm run build and verifies frontend/dist/index.html.
+- Docker Compose Specification Validation: validates development and production Compose files.
 
-### Current SSH-based CD
+Review the specific workflow run and annotations before reporting a commit as verified.
 
-The .github/workflows/cd.yml workflow defines SSH deployment from a GitHub-hosted runner to EC2, followed by Compose deployment and health/telemetry checks. It requires configured GitHub secrets and an existing production .env on EC2.
+### Active production CD workflow
 
-Recent debugging found TCP port 22 from GitHub-hosted runners was unreachable because the active runner egress address was not allowed by the EC2 security group. That makes the current SSH-based deployment an unreliable, unresolved workflow. CI/CD migration is currently deferred.
+The active deployment path is **CloudMonitor CD — Deploy to AWS EC2 via SSM** in .github/workflows/cd.yml.
 
-### Planned migration to AWS Systems Manager
+It uses GitHub Actions OIDC to assume CloudMonitorGitHubDeployRole and AWS Systems Manager Run Command to reach the CloudMonitor EC2 instance. The EC2 instance has CloudMonitorEC2SSMRole with AmazonSSMManagedInstanceCore. GitHub-hosted runners do not need inbound SSH access to deploy.
 
-GitHub issue #9 tracks replacing runner-originated SSH with Systems Manager Run Command. Recommended staged approach:
+The workflow is manual-only via workflow_dispatch. Pushes/merges to main run CI but do not automatically deploy production. Production deploy/rollback require an explicit operation and confirmation.
 
-1. Read the EC2 instance ID, IAM instance profile, and SSM Agent status.
-2. Confirm EC2 is online as a Systems Manager managed node.
-3. Configure a least-privilege instance role and required outbound access to SSM endpoints.
-4. Test an innocuous read-only SSM command.
-5. Configure GitHub-to-AWS authentication with OIDC and narrowly scoped permissions.
-6. Update CD to invoke only the approved deployment operation through SSM.
-7. Test in a controlled run and verify the web app, backend health, Prometheus targets and PostgreSQL persistence.
-8. Keep existing administrator access until SSM deployment is confirmed.
-9. Only then remove the deployment's dependency on runner-originated inbound SSH.
+Operations:
+1. oidc-check — inspect OIDC issuer/audience/subject, assume the AWS role and verify AWS caller identity.
+2. ssm-preflight — verify EC2 is Online in SSM and run read-only Docker/Compose checks.
+3. deploy — fetch origin/main, build backend/frontend, update Compose services and verify frontend/backend/Prometheus health.
+4. rollback — restore the previous recorded Git revision and rebuild backend/frontend.
 
-Do not change the security group or IAM permissions until the staged design has been reviewed.
+### AWS and GitHub configuration
+
+The OIDC provider is token.actions.githubusercontent.com with audience sts.amazonaws.com. The deployment role trust policy is scoped to the CloudMonitor repository's production Environment subject. The role's inline policy is scoped to the approved AWS-RunShellScript document and the CloudMonitor EC2 target, plus the command/instance read permissions needed by the workflow.
+
+The GitHub production Environment has these variables:
+- AWS_ACCOUNT_ID
+- AWS_DEPLOY_ROLE_ARN
+- EC2_INSTANCE_ID
+
+The production Environment deployment branch rule allows main. Legacy SSH secrets may still exist in the Environment; the current SSM workflow does not use them. Search all workflows/scripts before removing them.
+
+### First deployment and current state
+
+The original production directory was archive-based and did not contain .git metadata. A one-time, locally protected Git baseline was created on EC2 after sensitive files/backups were excluded and checked. The SSM workflow then fetched origin/main and deployed the repository revision.
+
+The first controlled SSM deployment succeeded on 1 November 2026. Verified commit: f536dad97518a761c12b83ff578ff3194e9ed04f. Frontend returned HTTP 200, backend health reported healthy, PostgreSQL remained healthy, Prometheus required targets were up, and the named database volume cloudmonitor-prod_postgres_data was preserved.
+
+### Production safety
+
+- Keep /home/ubuntu/cloud_monitor/.env outside Git and with restrictive permissions.
+- Never print secrets or replace the production .env with an example file.
+- The workflow does not use docker compose down -v.
+- The deploy step records previous and successful Git SHAs under /var/lib/cloudmonitor/.
+- The rollback path is a source/build rollback only. It does not restore PostgreSQL data or reverse schema migrations.
+- Keep administrator SSH restricted as a break-glass path until a separate human SSM access method is tested. SSM deployment only removes the GitHub runner's need for inbound SSH.
+- Do not claim HTTPS is active solely because port 443 is allowed. TLS remains a separate security task.
+
+### Detailed setup
+
+See [AWS IAM, GitHub OIDC, SSM and Production Setup](AWS_IAM_OIDC_SSM_PRODUCTION_SETUP.md) for the button-by-button IAM, OIDC provider, role trust, inline policy, GitHub Environment, workflow operation, first-host bootstrap, verification, rollback and troubleshooting procedure.
+
+See [SSM Deployment Migration](SSM_DEPLOYMENT_MIGRATION.md) for the completion record for Issue #9.
+ 
+M permissions until the staged design has been reviewed.
 
 ## 10. Safe deployment checklist
 
