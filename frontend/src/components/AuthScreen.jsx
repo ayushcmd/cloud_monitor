@@ -1,15 +1,25 @@
 import React, { useState } from 'react';
 import { Activity, Lock, Mail, ArrowRight, ShieldCheck, CheckCircle2, AlertCircle, Sun, Moon, Info } from 'lucide-react';
 import { api } from '../api';
+import PasswordToggleButton from './PasswordToggleButton';
 
 export default function AuthScreen({ onAuthSuccess, sessionExpired = false, currentTheme, onToggleTheme }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(sessionExpired ? 'Your session has expired. Please sign in again.' : null);
   const [successMsg, setSuccessMsg] = useState(null);
+
+  const switchMode = (newMode) => {
+    setMode(newMode);
+    setError(null);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -97,14 +107,14 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
             <button
               type="button"
               className={`auth-tab-btn ${mode === 'login' ? 'active' : ''}`}
-              onClick={() => { setMode('login'); setError(null); }}
+              onClick={() => switchMode('login')}
             >
               Sign In
             </button>
             <button
               type="button"
               className={`auth-tab-btn ${mode === 'register' ? 'active' : ''}`}
-              onClick={() => { setMode('register'); setError(null); }}
+              onClick={() => switchMode('register')}
             >
               Create Account
             </button>
@@ -155,13 +165,18 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
                 <Lock size={18} className="input-icon" />
                 <input
                   id="auth-password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   placeholder="••••••••"
-                  className="auth-input"
+                  className="auth-input has-toggle"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                />
+                <PasswordToggleButton
+                  isVisible={showPassword}
+                  onToggle={() => setShowPassword((prev) => !prev)}
                   disabled={loading}
                 />
               </div>
@@ -179,13 +194,19 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
                   <Lock size={18} className="input-icon" />
                   <input
                     id="auth-confirm-password"
-                    type="password"
+                    type={showConfirmPassword ? 'text' : 'password'}
                     required
                     autoComplete="new-password"
                     placeholder="••••••••"
-                    className="auth-input"
+                    className="auth-input has-toggle"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={loading}
+                  />
+                  <PasswordToggleButton
+                    isVisible={showConfirmPassword}
+                    onToggle={() => setShowConfirmPassword((prev) => !prev)}
+                    label="confirm password"
                     disabled={loading}
                   />
                 </div>
@@ -210,7 +231,7 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
                 <button
                   type="button"
                   className="link-btn"
-                  onClick={() => { setMode('register'); setError(null); }}
+                  onClick={() => switchMode('register')}
                 >
                   Create one now
                 </button>
@@ -221,7 +242,7 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
                 <button
                   type="button"
                   className="link-btn"
-                  onClick={() => { setMode('login'); setError(null); }}
+                  onClick={() => switchMode('login')}
                 >
                   Sign in
                 </button>

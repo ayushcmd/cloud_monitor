@@ -68,7 +68,9 @@
 }
 
 /* Base Resets */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -657,15 +659,19 @@ body {
     transform: translateX(-100%);
     width: 240px !important;
   }
+
   .app-sidebar.mobile-open {
     transform: translateX(0);
   }
+
   .app-main {
     margin-left: 0 !important;
   }
+
   .kpi-grid {
     grid-template-columns: 1fr;
   }
+
   .content-body {
     padding: 16px;
   }
@@ -677,7 +683,9 @@ body {
 
 /* Keyframe for loading spinners */
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spin-anim {
@@ -813,6 +821,35 @@ body {
 .auth-input:focus {
   border-color: var(--accent-teal);
   box-shadow: 0 0 0 3px rgba(34, 184, 176, 0.2);
+}
+
+.auth-input.has-toggle {
+  padding-right: 42px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 6px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.password-toggle-btn:hover:not(:disabled) {
+  color: var(--text-main);
+  background-color: rgba(120, 159, 180, 0.15);
+}
+
+.password-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .auth-submit-btn {
