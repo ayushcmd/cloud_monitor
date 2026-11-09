@@ -6,7 +6,6 @@ import {
   X,
   ShieldCheck,
   Terminal,
-  Info,
   RefreshCw,
   Trash2,
   KeyRound,
@@ -15,13 +14,22 @@ import {
   ArrowRight,
   ArrowLeft,
   CheckCircle2,
-  Cpu,
-  HardDrive,
-  ExternalLink,
-  Laptop,
   Monitor,
   Apple
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
+  Tooltip,
+  Chip,
+  LinearProgress,
+  CircularProgress,
+  Alert,
+  Button
+} from '@mui/material';
 import { api } from '../api';
 
 export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChange, onSelectHostMetrics }) {
@@ -82,7 +90,6 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
         setCurrentStep('step_a');
       }
     } else {
-      // Reset wizard on close
       clearInterval(pollingRef.current);
       setError(null);
       setVerifySeconds(0);
@@ -94,13 +101,13 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
   useEffect(() => {
     if (selectedOS === 'windows') {
       setShellTab('powershell');
-      setHostName(prev => prev.includes('Host') ? 'Windows Workstation' : prev);
+      setHostName((prev) => (prev.includes('Host') ? 'Windows Workstation' : prev));
     } else if (selectedOS === 'linux') {
       setShellTab('bash');
-      setHostName(prev => prev.includes('Host') || prev.includes('Windows') ? 'Linux Server' : prev);
+      setHostName((prev) => (prev.includes('Host') || prev.includes('Windows') ? 'Linux Server' : prev));
     } else if (selectedOS === 'macos') {
       setShellTab('bash');
-      setHostName(prev => prev.includes('Host') || prev.includes('Windows') || prev.includes('Linux') ? 'Mac Workstation' : prev);
+      setHostName((prev) => (prev.includes('Host') || prev.includes('Windows') || prev.includes('Linux') ? 'Mac Workstation' : prev));
     }
   }, [selectedOS]);
 
@@ -127,7 +134,7 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
 
       checkStatus();
       pollingRef.current = setInterval(() => {
-        setVerifySeconds(s => {
+        setVerifySeconds((s) => {
           if (s >= 55) {
             setVerifyTimeout(true);
           }
@@ -142,11 +149,9 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
 
   if (!isOpen) return null;
 
-  // Resolve public API Server URL automatically (no hardcoded localhost or tunnels!)
   const serverUrl = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
   const agentSecret = activeKey || activeAgent?.agent_key || 'YOUR_GENERATED_AGENT_KEY';
 
-  // Build OS-specific, idempotent commands
   const getCommand = () => {
     if (shellTab === 'powershell') {
       return `# 1. Remove previous agent container if present (safe retry)
@@ -266,67 +271,110 @@ docker run -d \\
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-dialog connect-docker-dialog" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="modal-header-row">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div className="brand-icon" style={{ width: '38px', height: '38px' }}>
-              <Box size={20} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                Connect Docker Environment
-              </h3>
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                Tenant: <strong>{user?.email}</strong> (Tenant ID #{user?.id})
-              </p>
-            </div>
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+      PaperProps={{
+        sx: {
+          borderRadius: '20px',
+          backgroundColor: 'var(--bg-card-solid)',
+          border: '1px solid var(--border-glass-strong)',
+          backgroundImage: 'none',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.45)',
+          overflow: 'hidden',
+        },
+      }}
+    >
+      {/* Header */}
+      <DialogTitle
+        sx={{
+          p: '20px 24px',
+          borderBottom: '1px solid var(--border-glass)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="brand-icon w-10 h-10 rounded-xl bg-gradient-to-br from-brand-teal to-brand-cyan flex items-center justify-center text-white shadow-md">
+            <Box size={22} />
           </div>
-          <button className="theme-toggle-btn" onClick={onClose} title="Close" style={{ width: '32px', height: '32px' }}>
-            <X size={18} />
-          </button>
+          <div>
+            <h3 className="text-lg font-bold text-theme-main leading-tight">Connect Docker Environment</h3>
+            <p className="text-xs text-theme-muted mt-0.5">
+              Tenant: <strong className="text-theme-main">{user?.email}</strong> (Tenant ID #{user?.id})
+            </p>
+          </div>
         </div>
+        <Tooltip title="Close" arrow>
+          <IconButton
+            onClick={onClose}
+            size="small"
+            sx={{
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border-glass)',
+              borderRadius: '8px',
+              '&:hover': { color: 'var(--text-main)', backgroundColor: 'var(--bg-hover)' },
+            }}
+          >
+            <X size={18} />
+          </IconButton>
+        </Tooltip>
+      </DialogTitle>
 
+      <DialogContent sx={{ p: '20px 24px' }}>
         {/* Wizard Stepper Bar */}
-        <div className="wizard-stepper">
+        <div className="wizard-stepper flex items-center gap-1.5 p-1.5 mb-5 bg-theme-input border border-theme-glass rounded-xl overflow-x-auto">
           <button
-            className={`wizard-step-pill ${currentStep === 'step_a' ? 'active' : ''}`}
+            className={`wizard-step-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+              currentStep === 'step_a' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main'
+            }`}
             onClick={() => setCurrentStep('step_a')}
           >
-            <span className="step-num">1</span> Choose OS
+            <span className="step-num w-4 h-4 rounded-full bg-white/20 inline-flex items-center justify-center text-[0.65rem]">1</span> Choose OS
           </button>
           <button
-            className={`wizard-step-pill ${currentStep === 'step_b' ? 'active' : ''}`}
+            className={`wizard-step-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+              currentStep === 'step_b' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main'
+            }`}
             onClick={() => setCurrentStep('step_b')}
           >
-            <span className="step-num">2</span> Configure
+            <span className="step-num w-4 h-4 rounded-full bg-white/20 inline-flex items-center justify-center text-[0.65rem]">2</span> Configure
           </button>
           <button
-            className={`wizard-step-pill ${currentStep === 'step_c' ? 'active' : ''}`}
+            className={`wizard-step-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              !activeAgent ? 'opacity-40 cursor-not-allowed text-theme-muted' : currentStep === 'step_c' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main cursor-pointer'
+            }`}
             onClick={() => activeAgent && setCurrentStep('step_c')}
             disabled={!activeAgent}
           >
-            <span className="step-num">3</span> Install
+            <span className="step-num w-4 h-4 rounded-full bg-white/20 inline-flex items-center justify-center text-[0.65rem]">3</span> Install
           </button>
           <button
-            className={`wizard-step-pill ${currentStep === 'step_d' ? 'active' : ''}`}
+            className={`wizard-step-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              !activeAgent ? 'opacity-40 cursor-not-allowed text-theme-muted' : currentStep === 'step_d' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main cursor-pointer'
+            }`}
             onClick={() => activeAgent && setCurrentStep('step_d')}
             disabled={!activeAgent}
           >
-            <span className="step-num">4</span> Verify
+            <span className="step-num w-4 h-4 rounded-full bg-white/20 inline-flex items-center justify-center text-[0.65rem]">4</span> Verify
           </button>
           <button
-            className={`wizard-step-pill ${currentStep === 'step_e' ? 'active' : ''}`}
+            className={`wizard-step-pill flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              !connectionStatus && currentStep !== 'step_e' ? 'opacity-40 cursor-not-allowed text-theme-muted' : currentStep === 'step_e' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main cursor-pointer'
+            }`}
             onClick={() => activeAgent && setCurrentStep('step_e')}
             disabled={!connectionStatus && currentStep !== 'step_e'}
           >
-            <span className="step-num">5</span> Summary
+            <span className="step-num w-4 h-4 rounded-full bg-white/20 inline-flex items-center justify-center text-[0.65rem]">5</span> Summary
           </button>
           {agents.length > 0 && (
             <button
-              className={`wizard-step-pill ${currentStep === 'list' ? 'active' : ''}`}
-              style={{ marginLeft: 'auto' }}
+              className={`wizard-step-pill ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                currentStep === 'list' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'text-theme-muted hover:text-theme-main'
+              }`}
               onClick={() => setCurrentStep('list')}
             >
               Manage Hosts ({agents.length})
@@ -334,573 +382,631 @@ docker run -d \\
           )}
         </div>
 
-        <div className="connect-docker-body">
-          {error && (
-            <div className="status-banner error" style={{ marginBottom: '14px' }}>
-              <AlertCircle size={18} style={{ flexShrink: 0 }} />
-              <span>{error}</span>
+        {error && (
+          <Alert
+            severity="error"
+            className="mb-4 text-left"
+            sx={{
+              mb: 2,
+              borderRadius: '10px',
+              backgroundColor: 'rgba(239, 119, 119, 0.12)',
+              border: '1px solid rgba(239, 119, 119, 0.35)',
+              color: 'var(--status-critical)',
+              '& .MuiAlert-icon': { color: 'var(--status-critical)' },
+            }}
+          >
+            {error}
+          </Alert>
+        )}
+
+        {/* ============================================================ */}
+        {/* SCREEN A — CHOOSE ENVIRONMENT                                */}
+        {/* ============================================================ */}
+        {currentStep === 'step_a' && (
+          <div>
+            <h4 className="text-base font-semibold text-theme-main mb-1">Select Your Operating System</h4>
+            <p className="text-xs sm:text-sm text-theme-muted mb-4">
+              Select the platform hosting your Docker engine. CloudMonitor will tailor the installation commands and socket bindings.
+            </p>
+
+            <div className="os-cards-grid grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {/* Windows Card */}
+              <div
+                className={`os-card p-4 rounded-xl border cursor-pointer transition-all flex flex-col hover:-translate-y-0.5 ${
+                  selectedOS === 'windows'
+                    ? 'border-brand-cyan bg-brand-cyan/10 ring-2 ring-brand-cyan/35'
+                    : 'bg-theme-card border-theme-glass hover:border-theme-glass-strong'
+                }`}
+                onClick={() => setSelectedOS('windows')}
+              >
+                <div className="os-card-header flex justify-between items-center mb-3">
+                  <Monitor size={26} className="text-brand-cyan" />
+                  <Chip label="Verified" size="small" color="success" sx={{ height: 20, fontSize: '0.65rem' }} />
+                </div>
+                <h5 className="os-title text-base font-bold text-theme-main mb-1">Windows</h5>
+                <p className="os-desc text-xs text-theme-muted mb-3 flex-1 leading-snug">
+                  Docker Desktop for Windows 10/11 using WSL2 or Hyper-V backend.
+                </p>
+                <div className="os-tags flex flex-wrap gap-1.5">
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">Docker Desktop 4+</span>
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">Unix Socket / WSL2</span>
+                </div>
+              </div>
+
+              {/* Linux Card */}
+              <div
+                className={`os-card p-4 rounded-xl border cursor-pointer transition-all flex flex-col hover:-translate-y-0.5 ${
+                  selectedOS === 'linux'
+                    ? 'border-brand-cyan bg-brand-cyan/10 ring-2 ring-brand-cyan/35'
+                    : 'bg-theme-card border-theme-glass hover:border-theme-glass-strong'
+                }`}
+                onClick={() => setSelectedOS('linux')}
+              >
+                <div className="os-card-header flex justify-between items-center mb-3">
+                  <Terminal size={26} className="text-brand-cyan" />
+                  <Chip label="Verified" size="small" color="success" sx={{ height: 20, fontSize: '0.65rem' }} />
+                </div>
+                <h5 className="os-title text-base font-bold text-theme-main mb-1">Linux</h5>
+                <p className="os-desc text-xs text-theme-muted mb-3 flex-1 leading-snug">
+                  Native Docker Engine or Docker Desktop on Ubuntu, Debian, RHEL, CentOS.
+                </p>
+                <div className="os-tags flex flex-wrap gap-1.5">
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">Docker Engine 20.10+</span>
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">/var/run/docker.sock</span>
+                </div>
+              </div>
+
+              {/* macOS Card */}
+              <div
+                className={`os-card p-4 rounded-xl border cursor-pointer transition-all flex flex-col hover:-translate-y-0.5 ${
+                  selectedOS === 'macos'
+                    ? 'border-brand-cyan bg-brand-cyan/10 ring-2 ring-brand-cyan/35'
+                    : 'bg-theme-card border-theme-glass hover:border-theme-glass-strong'
+                }`}
+                onClick={() => setSelectedOS('macos')}
+              >
+                <div className="os-card-header flex justify-between items-center mb-3">
+                  <Apple size={26} className="text-brand-cyan" />
+                  <Chip label="Verified" size="small" color="success" sx={{ height: 20, fontSize: '0.65rem' }} />
+                </div>
+                <h5 className="os-title text-base font-bold text-theme-main mb-1">macOS</h5>
+                <p className="os-desc text-xs text-theme-muted mb-3 flex-1 leading-snug">
+                  Docker Desktop for macOS on Apple Silicon (M-series) or Intel Macs.
+                </p>
+                <div className="os-tags flex flex-wrap gap-1.5">
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">Apple Silicon / Intel</span>
+                  <span className="os-tag text-[0.7rem] px-1.5 py-0.5 rounded bg-theme-glass text-theme-subtle border border-theme-glass">Docker Desktop 4+</span>
+                </div>
+              </div>
             </div>
-          )}
 
-          {/* ============================================================ */}
-          {/* SCREEN A — CHOOSE ENVIRONMENT                                */}
-          {/* ============================================================ */}
-          {currentStep === 'step_a' && (
-            <div>
-              <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Select Your Operating System
-              </h4>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '18px' }}>
-                Select the platform hosting your Docker engine. CloudMonitor will tailor the installation commands and socket bindings.
-              </p>
-
-              <div className="os-cards-grid">
-                {/* Windows Card */}
-                <div
-                  className={`os-card ${selectedOS === 'windows' ? 'selected' : ''}`}
-                  onClick={() => setSelectedOS('windows')}
-                >
-                  <div className="os-card-header">
-                    <Monitor size={28} className="os-icon" />
-                    <span className="badge badge-healthy">Verified</span>
-                  </div>
-                  <h5 className="os-title">Windows</h5>
-                  <p className="os-desc">Docker Desktop for Windows 10/11 using WSL2 or Hyper-V backend.</p>
-                  <div className="os-tags">
-                    <span className="os-tag">Docker Desktop 4+</span>
-                    <span className="os-tag">Unix Socket / WSL2</span>
-                  </div>
-                </div>
-
-                {/* Linux Card */}
-                <div
-                  className={`os-card ${selectedOS === 'linux' ? 'selected' : ''}`}
-                  onClick={() => setSelectedOS('linux')}
-                >
-                  <div className="os-card-header">
-                    <Terminal size={28} className="os-icon" />
-                    <span className="badge badge-healthy">Verified</span>
-                  </div>
-                  <h5 className="os-title">Linux</h5>
-                  <p className="os-desc">Native Docker Engine or Docker Desktop on Ubuntu, Debian, RHEL, CentOS.</p>
-                  <div className="os-tags">
-                    <span className="os-tag">Docker Engine 20.10+</span>
-                    <span className="os-tag">/var/run/docker.sock</span>
-                  </div>
-                </div>
-
-                {/* macOS Card */}
-                <div
-                  className={`os-card ${selectedOS === 'macos' ? 'selected' : ''}`}
-                  onClick={() => setSelectedOS('macos')}
-                >
-                  <div className="os-card-header">
-                    <Apple size={28} className="os-icon" />
-                    <span className="badge badge-healthy">Verified</span>
-                  </div>
-                  <h5 className="os-title">macOS</h5>
-                  <p className="os-desc">Docker Desktop for macOS on Apple Silicon (M-series) or Intel Macs.</p>
-                  <div className="os-tags">
-                    <span className="os-tag">Apple Silicon / Intel</span>
-                    <span className="os-tag">Docker Desktop 4+</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
-                <button className="btn btn-primary" onClick={() => setCurrentStep('step_b')}>
-                  Continue to Configuration <ArrowRight size={16} />
-                </button>
-              </div>
+            <div className="flex justify-end mt-6">
+              <button className="btn btn-primary px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 cursor-pointer transition-all" onClick={() => setCurrentStep('step_b')}>
+                <span>Continue to Configuration</span>
+                <ArrowRight size={16} />
+              </button>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* ============================================================ */}
-          {/* SCREEN B — CREATE CONNECTION                                 */}
-          {/* ============================================================ */}
-          {currentStep === 'step_b' && (
-            <div>
-              <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Name Your Docker Host
-              </h4>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '18px' }}>
-                Assign a friendly identifier to distinguish this Docker environment in your telemetry dashboard.
-              </p>
+        {/* ============================================================ */}
+        {/* SCREEN B — CREATE CONNECTION                                 */}
+        {/* ============================================================ */}
+        {currentStep === 'step_b' && (
+          <div>
+            <h4 className="text-base font-semibold text-theme-main mb-1">Name Your Docker Host</h4>
+            <p className="text-xs sm:text-sm text-theme-muted mb-4">
+              Assign a friendly identifier to distinguish this Docker environment in your telemetry dashboard.
+            </p>
 
-              <form onSubmit={handleCreateConnection}>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '6px' }}>
-                    Docker Host Name
-                  </label>
-                  <input
-                    type="text"
-                    className="auth-input"
-                    value={hostName}
-                    onChange={(e) => setHostName(e.target.value)}
-                    placeholder="e.g. Production-EC2-Node or Home-Workstation"
-                    required
-                  />
-                </div>
-
-                <div className="info-callout" style={{ marginBottom: '20px' }}>
-                  <ShieldCheck size={20} style={{ color: 'var(--status-healthy)', flexShrink: 0 }} />
-                  <div style={{ fontSize: '0.8125rem' }}>
-                    <strong>Automated & Cryptographically Isolated:</strong>
-                    <p style={{ marginTop: '2px', opacity: 0.9 }}>
-                      Clicking <strong>Install & Connect</strong> creates an isolated host record for Tenant #{user?.id} and generates a unique 256-bit secret key. Only a SHA-256 hash is permanently saved in PostgreSQL.
-                    </p>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <button type="button" className="btn" onClick={() => setCurrentStep('step_a')}>
-                    <ArrowLeft size={16} /> Back
-                  </button>
-                  <button type="submit" className="btn btn-primary" disabled={enrolling || !hostName.trim()}>
-                    {enrolling ? <RefreshCw size={16} className="spin-anim" /> : <ShieldCheck size={16} />}
-                    {enrolling ? 'Generating Credentials...' : 'Install & Connect'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* ============================================================ */}
-          {/* SCREEN C — INSTALL AGENT                                     */}
-          {/* ============================================================ */}
-          {currentStep === 'step_c' && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <div>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                    Install Agent on {activeAgent?.name || hostName}
-                  </h4>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                    Public Server: <code>{serverUrl}</code> • Operating System: <strong style={{ textTransform: 'capitalize' }}>{selectedOS}</strong>
-                  </p>
-                </div>
-                <span className="badge badge-warning">Awaiting Execution</span>
+            <form onSubmit={handleCreateConnection} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-theme-main mb-1.5">Docker Host Name</label>
+                <input
+                  type="text"
+                  className="auth-input w-full py-2.5 px-3.5 rounded-lg border border-theme-glass-strong bg-theme-input text-theme-main text-sm outline-none transition-all focus:border-brand-teal focus:ring-2 focus:ring-brand-teal/20"
+                  value={hostName}
+                  onChange={(e) => setHostName(e.target.value)}
+                  placeholder="e.g. Production-EC2-Node or Home-Workstation"
+                  required
+                />
               </div>
 
-              {/* Shell Selector Tabs */}
-              <div className="tab-pill-group" style={{ marginBottom: '10px' }}>
-                {selectedOS === 'windows' && (
-                  <>
-                    <button
-                      className={`tab-pill ${shellTab === 'powershell' ? 'active' : ''}`}
-                      onClick={() => setShellTab('powershell')}
-                    >
-                      PowerShell
-                    </button>
-                    <button
-                      className={`tab-pill ${shellTab === 'cmd' ? 'active' : ''}`}
-                      onClick={() => setShellTab('cmd')}
-                    >
-                      Command Prompt (CMD)
-                    </button>
-                  </>
-                )}
-                {(selectedOS === 'linux' || selectedOS === 'macos') && (
-                  <button
-                    className={`tab-pill ${shellTab === 'bash' ? 'active' : ''}`}
-                    onClick={() => setShellTab('bash')}
-                  >
-                    Terminal (Bash / Zsh)
-                  </button>
-                )}
-                <button
-                  className={`tab-pill ${shellTab === 'compose' ? 'active' : ''}`}
-                  onClick={() => setShellTab('compose')}
-                >
-                  Docker Compose
-                </button>
-              </div>
-
-              {/* Code Box */}
-              <div className="code-block-container" style={{ marginBottom: '14px' }}>
-                <pre className="code-block" style={{ maxHeight: '180px' }}>{getCommand()}</pre>
-                <button className="copy-btn" onClick={handleCopy} title="Copy to Clipboard">
-                  {copied ? <Check size={16} style={{ color: 'var(--status-healthy)' }} /> : <Copy size={16} />}
-                  <span>{copied ? 'Copied!' : 'Copy'}</span>
-                </button>
-              </div>
-
-              {/* Security Guardrails Callout */}
-              <div className="info-callout" style={{ marginBottom: '18px' }}>
-                <ShieldCheck size={18} style={{ color: 'var(--status-healthy)', flexShrink: 0 }} />
-                <div style={{ fontSize: '0.785rem' }}>
-                  <strong>Security & Least-Privilege Design:</strong>
-                  <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                    <li>Mounts <code>/var/run/docker.sock:ro</code> in strict read-only mode.</li>
-                    <li>Transmits telemetry over public HTTPS (no SSH tunnels or inbound ports).</li>
-                    <li>Strict privacy: never reads container env variables, secrets, or shell commands.</li>
-                    <li>Idempotent: safely replaces previous agent containers on the same host.</li>
-                  </ul>
+              <div className="info-callout p-3.5 rounded-xl bg-theme-input border border-theme-glass flex items-start gap-3">
+                <ShieldCheck size={20} className="text-status-healthy flex-shrink-0 mt-0.5" />
+                <div className="text-xs leading-relaxed text-theme-muted">
+                  <strong className="text-theme-main block mb-0.5">Automated & Cryptographically Isolated:</strong>
+                  Clicking <strong>Install & Connect</strong> creates an isolated host record for Tenant #{user?.id} and generates a unique 256-bit secret key. Only a SHA-256 hash is permanently saved in PostgreSQL.
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <button className="btn" onClick={() => setCurrentStep('step_b')}>
+              <div className="flex justify-between items-center pt-2">
+                <button type="button" className="btn px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep('step_a')}>
                   <ArrowLeft size={16} /> Back
                 </button>
-                <button className="btn btn-primary" onClick={() => setCurrentStep('step_d')}>
-                  I've Run the Command / Verify <ArrowRight size={16} />
+                <button type="submit" className="btn btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" disabled={enrolling || !hostName.trim()}>
+                  {enrolling ? <CircularProgress size={16} color="inherit" /> : <ShieldCheck size={16} />}
+                  <span>{enrolling ? 'Generating Credentials...' : 'Install & Connect'}</span>
                 </button>
               </div>
-            </div>
-          )}
+            </form>
+          </div>
+        )}
 
-          {/* ============================================================ */}
-          {/* SCREEN D — VERIFY CONNECTION                                 */}
-          {/* ============================================================ */}
-          {currentStep === 'step_d' && (
-            <div>
-              <div style={{ textAlign: 'center', padding: '12px 0 20px 0' }}>
-                <div className="verify-spinner-wrap">
-                  <RefreshCw size={36} className="spin-anim" style={{ color: 'var(--accent-cyan)' }} />
-                </div>
-                <h4 style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: '12px', color: 'var(--text-main)' }}>
-                  Listening for Agent Connection...
+        {/* ============================================================ */}
+        {/* SCREEN C — INSTALL AGENT                                     */}
+        {/* ============================================================ */}
+        {currentStep === 'step_c' && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h4 className="text-base font-semibold text-theme-main">
+                  Install Agent on {activeAgent?.name || hostName}
                 </h4>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  Target Host: <strong>{activeAgent?.name || hostName}</strong> • Polling elapsed: {verifySeconds}s
+                <p className="text-xs text-theme-muted mt-0.5">
+                  Public Server: <code className="bg-theme-glass px-1 py-0.5 rounded text-theme-main font-mono">{serverUrl}</code> • Operating System: <strong className="capitalize text-theme-main">{selectedOS}</strong>
                 </p>
               </div>
+              <Chip label="Awaiting Execution" size="small" color="warning" sx={{ height: 22, fontSize: '0.7rem', fontWeight: 600 }} />
+            </div>
 
-              {/* Verification Progress Stepper */}
-              <div className="verification-steps-card">
-                <div className="v-step done">
-                  <CheckCircle2 size={18} className="v-icon done" />
-                  <div className="v-info">
-                    <span className="v-title">1. Host & Secret Provisioned</span>
-                    <span className="v-desc">Tenant isolation validated on PostgreSQL</span>
-                  </div>
-                </div>
-
-                <div className={`v-step ${connectionStatus?.last_heartbeat ? 'done' : 'active'}`}>
-                  {connectionStatus?.last_heartbeat ? (
-                    <CheckCircle2 size={18} className="v-icon done" />
-                  ) : (
-                    <RefreshCw size={18} className="v-icon active spin-anim" />
-                  )}
-                  <div className="v-info">
-                    <span className="v-title">2. Agent Authentication & Heartbeat</span>
-                    <span className="v-desc">
-                      {connectionStatus?.last_heartbeat
-                        ? `Received heartbeat from ${connectionStatus.hostname || 'agent'} (${connectionStatus.os_info || 'Docker'})`
-                        : 'Waiting for agent daemon to deliver initial heartbeat...'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className={`v-step ${connectionStatus?.container_count > 0 ? 'done' : connectionStatus?.last_heartbeat ? 'active' : 'pending'}`}>
-                  {connectionStatus?.container_count > 0 ? (
-                    <CheckCircle2 size={18} className="v-icon done" />
-                  ) : connectionStatus?.last_heartbeat ? (
-                    <RefreshCw size={18} className="v-icon active spin-anim" />
-                  ) : (
-                    <div className="v-icon pending" />
-                  )}
-                  <div className="v-info">
-                    <span className="v-title">3. Container Discovery & Telemetry Ingestion</span>
-                    <span className="v-desc">
-                      {connectionStatus?.container_count > 0
-                        ? `Discovered ${connectionStatus.container_count} container(s) (${connectionStatus.running_count} running)`
-                        : 'Awaiting container cgroup metrics payload...'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {verifyTimeout && (
-                <div className="status-banner warning" style={{ marginTop: '16px' }}>
-                  <AlertCircle size={20} style={{ flexShrink: 0 }} />
-                  <div>
-                    <strong>Connection taking longer than expected?</strong>
-                    <p style={{ fontSize: '0.8rem', marginTop: '2px' }}>
-                      Ensure Docker Desktop or Docker Engine is running on your machine, then run the setup command in your terminal.
-                    </p>
-                  </div>
-                </div>
+            {/* Shell Selector Tabs */}
+            <div className="tab-pill-group flex gap-1.5 my-3">
+              {selectedOS === 'windows' && (
+                <>
+                  <button
+                    className={`tab-pill px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      shellTab === 'powershell' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'bg-theme-input text-theme-muted hover:text-theme-main border border-theme-glass'
+                    }`}
+                    onClick={() => setShellTab('powershell')}
+                  >
+                    PowerShell
+                  </button>
+                  <button
+                    className={`tab-pill px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      shellTab === 'cmd' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'bg-theme-input text-theme-muted hover:text-theme-main border border-theme-glass'
+                    }`}
+                    onClick={() => setShellTab('cmd')}
+                  >
+                    Command Prompt (CMD)
+                  </button>
+                </>
               )}
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20px' }}>
-                <button className="btn" onClick={() => setCurrentStep('step_c')}>
-                  <ArrowLeft size={16} /> View Command Again
-                </button>
+              {(selectedOS === 'linux' || selectedOS === 'macos') && (
                 <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setVerifySeconds(0);
-                    setVerifyTimeout(false);
-                  }}
+                  className={`tab-pill px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    shellTab === 'bash' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'bg-theme-input text-theme-muted hover:text-theme-main border border-theme-glass'
+                  }`}
+                  onClick={() => setShellTab('bash')}
                 >
-                  <RefreshCw size={14} /> Retry Verification
+                  Terminal (Bash / Zsh)
                 </button>
+              )}
+              <button
+                className={`tab-pill px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                  shellTab === 'compose' ? 'active bg-gradient-to-r from-brand-teal to-brand-cyan text-white shadow-sm' : 'bg-theme-input text-theme-muted hover:text-theme-main border border-theme-glass'
+                }`}
+                onClick={() => setShellTab('compose')}
+              >
+                Docker Compose
+              </button>
+            </div>
+
+            {/* Code Box */}
+            <div className="code-block-container relative my-3">
+              <pre className="code-block bg-[#0B111A] text-[#E2E8F0] p-4 rounded-xl font-mono text-xs overflow-x-auto border border-theme-glass leading-relaxed max-h-[190px]">
+                {getCommand()}
+              </pre>
+              <Tooltip title={copied ? 'Copied to Clipboard!' : 'Copy Command'} arrow>
+                <button
+                  className="copy-btn absolute top-2.5 right-2.5 flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg px-2.5 py-1 text-xs font-medium cursor-pointer transition-all"
+                  onClick={handleCopy}
+                >
+                  {copied ? <Check size={14} className="text-status-healthy" /> : <Copy size={14} />}
+                  <span>{copied ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </Tooltip>
+            </div>
+
+            {/* Security Guardrails Callout */}
+            <div className="info-callout p-3 rounded-xl bg-theme-input border border-theme-glass flex items-start gap-3 mb-4">
+              <ShieldCheck size={18} className="text-status-healthy flex-shrink-0 mt-0.5" />
+              <div className="text-xs leading-relaxed text-theme-muted">
+                <strong className="text-theme-main block mb-1">Security & Least-Privilege Design:</strong>
+                <ul className="list-disc ml-4 space-y-0.5">
+                  <li>Mounts <code className="text-theme-main">/var/run/docker.sock:ro</code> in strict read-only mode.</li>
+                  <li>Transmits telemetry over public HTTPS (no SSH tunnels or inbound ports).</li>
+                  <li>Strict privacy: never reads container env variables, secrets, or shell commands.</li>
+                </ul>
               </div>
             </div>
-          )}
 
-          {/* ============================================================ */}
-          {/* SCREEN E — SUCCESS                                           */}
-          {/* ============================================================ */}
-          {currentStep === 'step_e' && (
-            <div>
-              <div className="success-banner-box">
-                <div className="success-icon-badge">
-                  <CheckCircle2 size={32} />
+            <div className="flex justify-between items-center pt-2">
+              <button className="btn px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep('step_b')}>
+                <ArrowLeft size={16} /> Back
+              </button>
+              <button className="btn btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep('step_d')}>
+                <span>I've Run the Command / Verify</span>
+                <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* SCREEN D — VERIFY CONNECTION                                 */}
+        {/* ============================================================ */}
+        {currentStep === 'step_d' && (
+          <div>
+            <div className="text-center py-3 mb-2">
+              <div className="verify-spinner-wrap w-14 h-14 mx-auto rounded-full bg-brand-cyan/15 flex items-center justify-center mb-2">
+                <CircularProgress size={30} sx={{ color: 'var(--accent-cyan)' }} />
+              </div>
+              <h4 className="text-lg font-bold text-theme-main mt-1">Listening for Agent Connection...</h4>
+              <p className="text-xs text-theme-muted mt-0.5">
+                Target Host: <strong className="text-theme-main">{activeAgent?.name || hostName}</strong> • Polling elapsed: {verifySeconds}s
+              </p>
+            </div>
+
+            <div className="verification-steps-card flex flex-col gap-2.5 p-3.5 rounded-xl bg-theme-input border border-theme-glass">
+              <div className="v-step flex items-start gap-3 p-2 rounded-lg bg-status-healthy/10">
+                <CheckCircle2 size={18} className="text-status-healthy flex-shrink-0 mt-0.5" />
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-theme-main">1. Host & Secret Provisioned</span>
+                  <span className="text-[0.75rem] text-theme-muted">Tenant isolation validated on PostgreSQL</span>
                 </div>
-                <h4 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginTop: '8px' }}>
-                  Docker Host Successfully Connected!
-                </h4>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                  Agent is online and streaming live container metrics to your dashboard.
-                </p>
               </div>
 
-              {/* Connected Host Details Card */}
-              <div className="glass-panel" style={{ padding: '16px', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <div>
-                    <h5 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                      {connectionStatus?.name || activeAgent?.name}
-                    </h5>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                      Host: {connectionStatus?.hostname || 'Local Node'} • OS: {connectionStatus?.os_info || selectedOS}
-                    </span>
+              <div className={`v-step flex items-start gap-3 p-2 rounded-lg ${connectionStatus?.last_heartbeat ? 'bg-status-healthy/10' : 'bg-brand-cyan/10 border border-brand-cyan/25'}`}>
+                {connectionStatus?.last_heartbeat ? (
+                  <CheckCircle2 size={18} className="text-status-healthy flex-shrink-0 mt-0.5" />
+                ) : (
+                  <CircularProgress size={16} sx={{ color: 'var(--accent-cyan)', mt: 0.5, flexShrink: 0 }} />
+                )}
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-theme-main">2. Agent Authentication & Heartbeat</span>
+                  <span className="text-[0.75rem] text-theme-muted">
+                    {connectionStatus?.last_heartbeat
+                      ? `Received heartbeat from ${connectionStatus.hostname || 'agent'} (${connectionStatus.os_info || 'Docker'})`
+                      : 'Waiting for agent daemon to deliver initial heartbeat...'}
+                  </span>
+                </div>
+              </div>
+
+              <div className={`v-step flex items-start gap-3 p-2 rounded-lg ${connectionStatus?.container_count > 0 ? 'bg-status-healthy/10' : connectionStatus?.last_heartbeat ? 'bg-brand-cyan/10 border border-brand-cyan/25' : 'opacity-50'}`}>
+                {connectionStatus?.container_count > 0 ? (
+                  <CheckCircle2 size={18} className="text-status-healthy flex-shrink-0 mt-0.5" />
+                ) : connectionStatus?.last_heartbeat ? (
+                  <CircularProgress size={16} sx={{ color: 'var(--accent-cyan)', mt: 0.5, flexShrink: 0 }} />
+                ) : (
+                  <div className="w-4 h-4 rounded-full border-2 border-theme-glass-strong flex-shrink-0 mt-0.5" />
+                )}
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-theme-main">3. Container Discovery & Telemetry Ingestion</span>
+                  <span className="text-[0.75rem] text-theme-muted">
+                    {connectionStatus?.container_count > 0
+                      ? `Discovered ${connectionStatus.container_count} container(s) (${connectionStatus.running_count} running)`
+                      : 'Awaiting container cgroup metrics payload...'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {verifyTimeout && (
+              <Alert severity="warning" className="mt-3 text-left" sx={{ borderRadius: '10px' }}>
+                <strong className="block">Connection taking longer than expected?</strong>
+                Ensure Docker Desktop or Docker Engine is running on your machine, then run the setup command in your terminal.
+              </Alert>
+            )}
+
+            <div className="flex justify-between items-center mt-5">
+              <button className="btn px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep('step_c')}>
+                <ArrowLeft size={16} /> View Command Again
+              </button>
+              <button
+                className="btn btn-primary px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer"
+                onClick={() => {
+                  setVerifySeconds(0);
+                  setVerifyTimeout(false);
+                }}
+              >
+                <RefreshCw size={14} /> Retry Verification
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* SCREEN E — SUCCESS                                           */}
+        {/* ============================================================ */}
+        {currentStep === 'step_e' && (
+          <div>
+            <div className="text-center py-4 mb-2">
+              <div className="w-14 h-14 rounded-full bg-status-healthy/15 text-status-healthy inline-flex items-center justify-center mb-2">
+                <CheckCircle2 size={32} />
+              </div>
+              <h4 className="text-xl font-bold text-theme-main">Docker Host Successfully Connected!</h4>
+              <p className="text-xs text-theme-muted mt-1">
+                Agent is online and streaming live container metrics to your dashboard.
+              </p>
+            </div>
+
+            {/* Connected Host Details Card */}
+            <div className="glass-panel p-4 rounded-xl border border-theme-glass bg-theme-input mb-4">
+              <div className="flex justify-between items-center mb-3">
+                <div>
+                  <h5 className="text-base font-bold text-theme-main leading-tight">
+                    {connectionStatus?.name || activeAgent?.name}
+                  </h5>
+                  <span className="text-xs text-theme-muted">
+                    Host: {connectionStatus?.hostname || 'Local Node'} • OS: {connectionStatus?.os_info || selectedOS}
+                  </span>
+                </div>
+                <Chip label="ONLINE" size="small" color="success" sx={{ fontWeight: 700, height: 22, fontSize: '0.7rem' }} />
+              </div>
+
+              <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
+                <div className="kpi-card p-2.5 rounded-lg bg-theme-card border border-theme-glass">
+                  <span className="kpi-label text-xs text-theme-muted">Containers</span>
+                  <div className="kpi-value text-base font-bold text-theme-main mt-0.5">
+                    {connectionStatus?.container_count || 0}
                   </div>
-                  <span className="badge badge-healthy" style={{ padding: '4px 10px', fontSize: '0.8125rem' }}>
-                    <span className="status-indicator-dot" style={{ width: '8px', height: '8px' }} /> ONLINE
+                  <span className="text-[0.7rem] text-status-healthy">
+                    {connectionStatus?.running_count || 0} running
                   </span>
                 </div>
 
-                <div className="kpi-grid" style={{ marginBottom: '12px' }}>
-                  <div className="kpi-card" style={{ padding: '10px' }}>
-                    <span className="kpi-label">Containers</span>
-                    <div className="kpi-value" style={{ fontSize: '1.25rem' }}>
-                      {connectionStatus?.container_count || 0}
-                    </div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--status-healthy)' }}>
-                      {connectionStatus?.running_count || 0} running
-                    </span>
+                <div className="kpi-card p-2.5 rounded-lg bg-theme-card border border-theme-glass">
+                  <span className="kpi-label text-xs text-theme-muted">Docker Engine</span>
+                  <div className="kpi-value text-base font-bold text-theme-main mt-0.5">
+                    {connectionStatus?.docker_version || 'v27+'}
                   </div>
-
-                  <div className="kpi-card" style={{ padding: '10px' }}>
-                    <span className="kpi-label">Docker Engine</span>
-                    <div className="kpi-value" style={{ fontSize: '1.15rem' }}>
-                      {connectionStatus?.docker_version || 'v27+'}
-                    </div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Socket IPC</span>
-                  </div>
-
-                  <div className="kpi-card" style={{ padding: '10px' }}>
-                    <span className="kpi-label">Agent Version</span>
-                    <div className="kpi-value" style={{ fontSize: '1.15rem' }}>
-                      v{connectionStatus?.agent_version || '1.1.0'}
-                    </div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)' }}>Active Daemon</span>
-                  </div>
-
-                  <div className="kpi-card" style={{ padding: '10px' }}>
-                    <span className="kpi-label">Total Container CPU</span>
-                    <div className="kpi-value" style={{ fontSize: '1.15rem' }}>
-                      {(connectionStatus?.total_cpu_percent || 0).toFixed(1)}%
-                    </div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Aggregated</span>
-                  </div>
+                  <span className="text-[0.7rem] text-theme-muted">Socket IPC</span>
                 </div>
 
-                <div style={{ fontSize: '0.775rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Last Heartbeat: {connectionStatus?.last_heartbeat ? new Date(connectionStatus.last_heartbeat).toLocaleTimeString() : 'Just now'}</span>
-                  <span>Auto-Restart: enabled (unless-stopped)</span>
+                <div className="kpi-card p-2.5 rounded-lg bg-theme-card border border-theme-glass">
+                  <span className="kpi-label text-xs text-theme-muted">Agent Version</span>
+                  <div className="kpi-value text-base font-bold text-theme-main mt-0.5">
+                    v{connectionStatus?.agent_version || '1.1.0'}
+                  </div>
+                  <span className="text-[0.7rem] text-brand-cyan">Active Daemon</span>
+                </div>
+
+                <div className="kpi-card p-2.5 rounded-lg bg-theme-card border border-theme-glass">
+                  <span className="kpi-label text-xs text-theme-muted">Total CPU</span>
+                  <div className="kpi-value text-base font-bold text-theme-main mt-0.5">
+                    {(connectionStatus?.total_cpu_percent || 0).toFixed(1)}%
+                  </div>
+                  <span className="text-[0.7rem] text-theme-muted">Aggregated</span>
                 </div>
               </div>
 
-              {/* 4 Functional Action Buttons */}
-              <div className="wizard-actions-grid">
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    if (onSelectHostMetrics) {
-                      onSelectHostMetrics(activeAgent?.id || connectionStatus?.agent_id);
-                    }
-                    onClose();
-                  }}
-                >
-                  <Server size={15} /> View Metrics
-                </button>
-
-                <button
-                  className="btn"
-                  onClick={() => setCurrentStep('step_c')}
-                  title="View setup command again"
-                >
-                  <RefreshCw size={15} /> Reconnect
-                </button>
-
-                <button
-                  className="btn"
-                  onClick={() => setConfirmRotate(activeAgent || connectionStatus)}
-                  title="Rotate agent credentials"
-                >
-                  <KeyRound size={15} /> Rotate Credential
-                </button>
-
-                <button
-                  className="btn btn-danger"
-                  onClick={() => setConfirmDisconnect(activeAgent || connectionStatus)}
-                  title="Disconnect and revoke host"
-                >
-                  <Trash2 size={15} /> Disconnect Host
-                </button>
+              <div className="text-[0.75rem] text-theme-muted flex justify-between">
+                <span>Last Heartbeat: {connectionStatus?.last_heartbeat ? new Date(connectionStatus.last_heartbeat).toLocaleTimeString() : 'Just now'}</span>
+                <span>Auto-Restart: enabled (unless-stopped)</span>
               </div>
             </div>
-          )}
 
-          {/* ============================================================ */}
-          {/* MANAGE ENROLLED HOSTS LIST                                   */}
-          {/* ============================================================ */}
-          {currentStep === 'list' && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                <div>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                    Enrolled Docker Hosts ({agents.length})
-                  </h4>
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                    Manage credentials, inspect connectivity status, and disconnect hosts.
-                  </p>
-                </div>
-                <button className="btn btn-primary" onClick={() => setCurrentStep('step_a')}>
-                  + Connect Another Host
-                </button>
+            {/* 4 Functional Action Buttons */}
+            <div className="wizard-actions-grid grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <button
+                className="btn btn-primary py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => {
+                  if (onSelectHostMetrics) {
+                    onSelectHostMetrics(activeAgent?.id || connectionStatus?.agent_id);
+                  }
+                  onClose();
+                }}
+              >
+                <Server size={14} /> View Metrics
+              </button>
+
+              <button
+                className="btn py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => setCurrentStep('step_c')}
+              >
+                <RefreshCw size={14} /> Reconnect
+              </button>
+
+              <button
+                className="btn py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => setConfirmRotate(activeAgent || connectionStatus)}
+              >
+                <KeyRound size={14} /> Rotate Key
+              </button>
+
+              <button
+                className="btn btn-danger py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                onClick={() => setConfirmDisconnect(activeAgent || connectionStatus)}
+              >
+                <Trash2 size={14} /> Disconnect
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* MANAGE ENROLLED HOSTS LIST                                   */}
+        {/* ============================================================ */}
+        {currentStep === 'list' && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h4 className="text-base font-semibold text-theme-main">Enrolled Docker Hosts ({agents.length})</h4>
+                <p className="text-xs text-theme-muted">
+                  Manage credentials, inspect connectivity status, and disconnect hosts.
+                </p>
               </div>
+              <button className="btn btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer" onClick={() => setCurrentStep('step_a')}>
+                + Connect Another Host
+              </button>
+            </div>
 
-              <div className="data-table-wrap" style={{ maxHeight: '280px', overflowY: 'auto' }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Host Name</th>
-                      <th>Platform</th>
-                      <th>Status</th>
-                      <th>Containers</th>
-                      <th>Last Heartbeat</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agents.map((ag) => (
-                      <tr key={ag.id}>
-                        <td style={{ fontWeight: 600 }}>{ag.name}</td>
-                        <td style={{ textTransform: 'capitalize' }}>{ag.os_type || 'linux'}</td>
-                        <td>
-                          <span className={`badge ${ag.status === 'online' ? 'badge-healthy' : ag.is_revoked ? 'badge-critical' : 'badge-warning'}`}>
-                            {ag.is_revoked ? 'REVOKED' : ag.status.toUpperCase()}
-                          </span>
-                        </td>
-                        <td>{ag.container_count || 0}</td>
-                        <td style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-                          {ag.last_heartbeat ? new Date(ag.last_heartbeat).toLocaleTimeString() : 'Awaiting'}
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            {!ag.is_revoked && (
-                              <>
+            <div className="data-table-wrap max-h-[280px] overflow-y-auto rounded-xl border border-theme-glass">
+              <table className="data-table w-full">
+                <thead>
+                  <tr className="bg-theme-card text-xs text-theme-muted uppercase">
+                    <th className="p-3 text-left">Host Name</th>
+                    <th className="p-3 text-left">Platform</th>
+                    <th className="p-3 text-left">Status</th>
+                    <th className="p-3 text-left">Containers</th>
+                    <th className="p-3 text-left">Last Heartbeat</th>
+                    <th className="p-3 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-theme-glass text-xs">
+                  {agents.map((ag) => (
+                    <tr key={ag.id} className="hover:bg-theme-card-hover transition-colors">
+                      <td className="p-3 font-semibold text-theme-main">{ag.name}</td>
+                      <td className="p-3 capitalize text-theme-muted">{ag.os_type || 'linux'}</td>
+                      <td className="p-3">
+                        <Chip
+                          label={ag.is_revoked ? 'REVOKED' : ag.status.toUpperCase()}
+                          size="small"
+                          color={ag.status === 'online' ? 'success' : ag.is_revoked ? 'error' : 'warning'}
+                          sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }}
+                        />
+                      </td>
+                      <td className="p-3 text-theme-main">{ag.container_count || 0}</td>
+                      <td className="p-3 font-mono text-theme-muted">
+                        {ag.last_heartbeat ? new Date(ag.last_heartbeat).toLocaleTimeString() : 'Awaiting'}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5">
+                          {!ag.is_revoked && (
+                            <>
+                              <Tooltip title="View Setup Command" arrow>
                                 <button
-                                  className="btn"
-                                  style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                                  className="btn py-1 px-2 text-xs rounded-md cursor-pointer"
                                   onClick={() => {
                                     setActiveAgent(ag);
                                     setCurrentStep('step_c');
                                   }}
-                                  title="View Setup Command"
                                 >
                                   Reconnect
                                 </button>
+                              </Tooltip>
+                              <Tooltip title="Rotate Credential" arrow>
                                 <button
-                                  className="btn"
-                                  style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                                  className="btn py-1 px-2 text-xs rounded-md cursor-pointer"
                                   onClick={() => setConfirmRotate(ag)}
-                                  title="Rotate Credential"
                                 >
                                   Rotate
                                 </button>
-                              </>
-                            )}
+                              </Tooltip>
+                            </>
+                          )}
+                          <Tooltip title="Disconnect Host" arrow>
                             <button
-                              className="btn btn-danger"
-                              style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                              className="btn btn-danger py-1 px-2 text-xs rounded-md cursor-pointer text-status-critical"
                               onClick={() => setConfirmDisconnect(ag)}
-                              title="Disconnect Host"
                             >
-                              <Trash2 size={12} />
+                              <Trash2 size={13} />
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Modal Actions Footer */}
-        <div className="modal-actions" style={{ marginTop: '20px' }}>
-          <button className="btn" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-
-      {/* Confirmation Sub-Modal: Rotate Credential */}
-      {confirmRotate && (
-        <div className="modal-overlay" style={{ zIndex: 1100 }}>
-          <div className="modal-dialog" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
-            <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '8px' }}>
-              Rotate Credential for "{confirmRotate.name}"?
-            </h4>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Rotating the credential will immediately invalidate the current agent key. The existing agent on that host will stop sending metrics until restarted with the newly generated key.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button className="btn" onClick={() => setConfirmRotate(null)} disabled={actionLoading}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={() => handleRotateKey(confirmRotate)} disabled={actionLoading}>
-                {actionLoading ? 'Rotating...' : 'Confirm Rotation'}
-              </button>
+                          </Tooltip>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </DialogContent>
 
-      {/* Confirmation Sub-Modal: Disconnect Host */}
-      {confirmDisconnect && (
-        <div className="modal-overlay" style={{ zIndex: 1100 }}>
-          <div className="modal-dialog" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
-            <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--status-critical)', marginBottom: '8px' }}>
-              Disconnect "{confirmDisconnect.name}"?
-            </h4>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Are you sure you want to disconnect this Docker host? The agent will be revoked and barred from transmitting metrics to your account.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button className="btn" onClick={() => setConfirmDisconnect(null)} disabled={actionLoading}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-danger"
-                onClick={() => handleDisconnect(confirmDisconnect.id, true)}
-                disabled={actionLoading}
-              >
-                {actionLoading ? 'Disconnecting...' : 'Disconnect & Remove'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      <DialogActions sx={{ p: '16px 24px', borderTop: '1px solid var(--border-glass)' }}>
+        <Button
+          onClick={onClose}
+          variant="outlined"
+          sx={{
+            borderRadius: '10px',
+            color: 'var(--text-main)',
+            borderColor: 'var(--border-glass)',
+            '&:hover': { borderColor: 'var(--border-glass-strong)', backgroundColor: 'var(--bg-hover)' },
+          }}
+        >
+          Close
+        </Button>
+      </DialogActions>
+
+      {/* Confirmation Sub-Modal: Rotate Credential via MUI Dialog */}
+      <Dialog
+        open={Boolean(confirmRotate)}
+        onClose={() => setConfirmRotate(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '16px',
+            backgroundColor: 'var(--bg-card-solid)',
+            border: '1px solid var(--border-glass-strong)',
+            backgroundImage: 'none',
+            p: 1,
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text-main)' }}>
+          Rotate Credential for "{confirmRotate?.name}"?
+        </DialogTitle>
+        <DialogContent>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            Rotating the credential will immediately invalidate the current agent key. The existing agent on that host will stop sending metrics until restarted with the newly generated key.
+          </p>
+        </DialogContent>
+        <DialogActions sx={{ p: '12px 16px' }}>
+          <Button onClick={() => setConfirmRotate(null)} disabled={actionLoading} sx={{ color: 'var(--text-muted)' }}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => handleRotateKey(confirmRotate)}
+            disabled={actionLoading}
+            variant="contained"
+            color="primary"
+          >
+            {actionLoading ? 'Rotating...' : 'Confirm Rotation'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirmation Sub-Modal: Disconnect Host via MUI Dialog */}
+      <Dialog
+        open={Boolean(confirmDisconnect)}
+        onClose={() => setConfirmDisconnect(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '16px',
+            backgroundColor: 'var(--bg-card-solid)',
+            border: '1px solid var(--border-glass-strong)',
+            backgroundImage: 'none',
+            p: 1,
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--status-critical)' }}>
+          Disconnect "{confirmDisconnect?.name}"?
+        </DialogTitle>
+        <DialogContent>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            Are you sure you want to disconnect this Docker host? The agent will be revoked and barred from transmitting metrics to your account.
+          </p>
+        </DialogContent>
+        <DialogActions sx={{ p: '12px 16px' }}>
+          <Button onClick={() => setConfirmDisconnect(null)} disabled={actionLoading} sx={{ color: 'var(--text-muted)' }}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => handleDisconnect(confirmDisconnect.id, true)}
+            disabled={actionLoading}
+            variant="contained"
+            color="error"
+          >
+            {actionLoading ? 'Disconnecting...' : 'Disconnect & Remove'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Dialog>
   );
 }
