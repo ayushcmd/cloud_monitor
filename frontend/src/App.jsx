@@ -29,6 +29,23 @@ import {
   Check,
   ExternalLink
 } from 'lucide-react';
+import { ThemeProvider } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import {
+  Tooltip,
+  IconButton,
+  Chip,
+  LinearProgress,
+  CircularProgress,
+  Alert,
+  Switch,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button
+} from '@mui/material';
+import { getMuiTheme } from './theme';
 import { api } from './api';
 import AuthScreen from './components/AuthScreen';
 import ConnectDockerModal from './components/ConnectDockerModal';
@@ -54,19 +71,20 @@ function TrendChart({
 }) {
   if (loading) {
     return (
-      <div style={{ height, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '8px' }}>
-        <RefreshCw size={22} className="spin-anim" style={{ color: 'var(--accent-cyan)' }} />
-        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Loading metric samples...</span>
+      <div style={{ height }} className="flex flex-col items-center justify-center text-theme-muted gap-2">
+        <CircularProgress size={24} sx={{ color: 'var(--accent-cyan)' }} />
+        <span className="text-xs font-semibold">Loading metric samples...</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div style={{ height, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--status-critical)', gap: '6px', padding: '12px', textAlign: 'center' }}>
-        <AlertTriangle size={22} />
-        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Prometheus Telemetry Unavailable</span>
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{error}</span>
+      <div style={{ height }} className="flex flex-col items-center justify-center p-3 text-center">
+        <Alert severity="error" sx={{ borderRadius: '10px', fontSize: '0.75rem', width: '100%', maxWidth: '400px' }}>
+          <strong className="block font-semibold">Prometheus Telemetry Unavailable</strong>
+          <span>{error}</span>
+        </Alert>
       </div>
     );
   }
@@ -167,6 +185,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('cloudmonitor_theme') || 'light');
   const [refreshInterval, setRefreshInterval] = useState(() => Number(localStorage.getItem('cloudmonitor_refresh')) || 10);
+  const muiTheme = useMemo(() => getMuiTheme(theme), [theme]);
 
   // Docker Connect Modal State & Live Agent State
   const [dockerModalOpen, setDockerModalOpen] = useState(false);
@@ -478,207 +497,236 @@ export default function App() {
   // 1. Initial Loading Splash
   if (authLoading) {
     return (
-      <div className="auth-loading-screen">
-        <div className="brand-icon spin-anim" style={{ width: '48px', height: '48px' }}>
-          <Activity size={26} />
+      <ThemeProvider theme={muiTheme}>
+        <CssBaseline />
+        <div className="auth-loading-screen flex flex-col items-center justify-center min-h-screen gap-4 bg-theme-page text-theme-muted">
+          <CircularProgress size={36} sx={{ color: 'var(--accent-teal)' }} />
+          <p className="font-semibold">Verifying CloudMonitor session...</p>
         </div>
-        <p style={{ fontWeight: 600 }}>Verifying CloudMonitor session...</p>
-      </div>
+      </ThemeProvider>
     );
   }
 
   // 2. Unauthenticated: Render Login/Register Screen
   if (!currentUser) {
     return (
-      <AuthScreen
-        onAuthSuccess={(userProfile) => {
-          setCurrentUser(userProfile);
-          setSessionExpiredNotice(false);
-        }}
-        sessionExpired={sessionExpiredNotice}
-        currentTheme={theme}
-        onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-      />
+      <ThemeProvider theme={muiTheme}>
+        <CssBaseline />
+        <AuthScreen
+          onAuthSuccess={(userProfile) => {
+            setCurrentUser(userProfile);
+            setSessionExpiredNotice(false);
+          }}
+          sessionExpired={sessionExpiredNotice}
+          currentTheme={theme}
+          onToggleTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+        />
+      </ThemeProvider>
     );
   }
 
   // 3. Authenticated: Render Personalized CloudMonitor Dashboard
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      {/* Collapsible Left Sidebar */}
-      <aside className={`app-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        <div className="sidebar-header">
-          <div className="brand-badge">
-            <div className="brand-icon">
-              <Activity size={20} />
+    <ThemeProvider theme={muiTheme}>
+      <CssBaseline />
+      <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+        {/* Collapsible Left Sidebar */}
+        <aside className={`app-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+          <div className="sidebar-header">
+            <div className="brand-badge">
+              <div className="brand-icon">
+                <Activity size={20} />
+              </div>
+              {!sidebarCollapsed && <span className="brand-title">CloudMonitor</span>}
             </div>
-            {!sidebarCollapsed && <span className="brand-title">CloudMonitor</span>}
           </div>
-        </div>
 
-        {/* Authenticated User Badge in Sidebar */}
-        <div className="user-profile-badge" title={`Signed in as ${currentUser.email}`}>
-          <div className="user-avatar">
-            {currentUser.email.charAt(0).toUpperCase()}
-          </div>
-          {!sidebarCollapsed && (
-            <div className="user-info">
-              <span className="user-email">{currentUser.email}</span>
-              <span className="user-role">Tenant ID #{currentUser.id}</span>
+          {/* Authenticated User Badge in Sidebar */}
+          <div className="user-profile-badge" title={`Signed in as ${currentUser.email}`}>
+            <div className="user-avatar">
+              {currentUser.email.charAt(0).toUpperCase()}
             </div>
-          )}
-        </div>
-
-        <nav className="sidebar-nav">
-          <button
-            className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`}
-            onClick={() => setActiveTab('overview')}
-            title="Overview"
-          >
-            <LayoutDashboard className="nav-icon" />
-            {!sidebarCollapsed && <span>Overview</span>}
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'metrics' ? 'active' : ''}`}
-            onClick={() => setActiveTab('metrics')}
-            title="Metrics"
-          >
-            <Activity className="nav-icon" />
-            {!sidebarCollapsed && <span>Metrics</span>}
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'targets' ? 'active' : ''}`}
-            onClick={() => setActiveTab('targets')}
-            title="Targets"
-          >
-            <Server className="nav-icon" />
-            {!sidebarCollapsed && <span>Targets ({kpis.targetsUp}/{kpis.targetsTotal})</span>}
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'alerts' ? 'active' : ''}`}
-            onClick={() => setActiveTab('alerts')}
-            title="Alerts"
-          >
-            <Bell className="nav-icon" />
-            {!sidebarCollapsed && <span>Alerts {kpis.firingAlerts > 0 && `(${kpis.firingAlerts})`}</span>}
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'sre' ? 'active' : ''}`}
-            onClick={() => setActiveTab('sre')}
-            title="SRE Lab"
-          >
-            <FlaskConical className="nav-icon" />
-            {!sidebarCollapsed && <span>SRE Lab</span>}
-          </button>
-
-          <button
-            className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-            title="Settings"
-          >
-            <SettingsIcon className="nav-icon" />
-            {!sidebarCollapsed && <span>Settings</span>}
-          </button>
-        </nav>
-
-        <div className="sidebar-footer">
-          <button
-            className="nav-item"
-            style={{ marginBottom: '8px', color: 'var(--status-critical)' }}
-            onClick={handleLogout}
-            title="Log Out"
-          >
-            <LogOut className="nav-icon" />
-            {!sidebarCollapsed && <span>Sign Out</span>}
-          </button>
-
-          <button
-            className="collapse-btn"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-          >
-            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-            {!sidebarCollapsed && <span style={{ fontSize: '0.8125rem' }}>Collapse sidebar</span>}
-          </button>
-        </div>
-      </aside>
-
-      {/* Main View Shell */}
-      <div className="app-main">
-        {/* Top Sticky Header */}
-        <header className="top-header">
-          <div className="header-left">
-            <h1 className="page-title">
-              {activeTab === 'overview' && 'Personalized Overview'}
-              {activeTab === 'metrics' && 'Telemetry & Metrics'}
-              {activeTab === 'targets' && 'Scrape Target Endpoints'}
-              {activeTab === 'alerts' && 'Active Alerts & Rules'}
-              {activeTab === 'sre' && 'SRE Failure Injection Lab'}
-              {activeTab === 'settings' && 'Portal Settings'}
-            </h1>
-            <span className="page-subtitle">User Workspace: {currentUser.email}</span>
+            {!sidebarCollapsed && (
+              <div className="user-info">
+                <span className="user-email">{currentUser.email}</span>
+                <span className="user-role">Tenant ID #{currentUser.id}</span>
+              </div>
+            )}
           </div>
 
-          <div className="header-right">
-            {/* Real Docker Environment Indicator (Clickable) */}
-            <button
-              className="status-pill"
-              onClick={() => setDockerModalOpen(true)}
-              style={{ cursor: 'pointer', border: '1px solid var(--border-glass-strong)' }}
-              title="Click to manage Docker Environments"
-            >
-              <Box size={14} style={{ color: onlineAgents.length > 0 ? 'var(--status-healthy)' : 'var(--status-warning)' }} />
-              <span style={{ color: 'var(--text-muted)' }}>Docker:</span>
-              <span style={{ color: onlineAgents.length > 0 ? 'var(--status-healthy)' : 'var(--status-warning)', fontWeight: 600 }}>
-                {onlineAgents.length > 0 ? `${onlineAgents.length} Online` : 'Not Connected'}
-              </span>
-            </button>
+          <nav className="sidebar-nav">
+            <Tooltip title={sidebarCollapsed ? "Overview" : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'overview' ? 'active' : ''}`}
+                onClick={() => setActiveTab('overview')}
+              >
+                <LayoutDashboard className="nav-icon" />
+                {!sidebarCollapsed && <span>Overview</span>}
+              </button>
+            </Tooltip>
 
-            {/* Core Platform API Status */}
-            <div className="status-pill">
-              <span className={`status-indicator-dot ${backendHealth?.status === 'healthy' ? '' : 'down'}`} />
-              <span>{backendHealth?.status === 'healthy' ? 'Platform API: Operational' : 'Platform API: Degraded'}</span>
+            <Tooltip title={sidebarCollapsed ? "Metrics" : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'metrics' ? 'active' : ''}`}
+                onClick={() => setActiveTab('metrics')}
+              >
+                <Activity className="nav-icon" />
+                {!sidebarCollapsed && <span>Metrics</span>}
+              </button>
+            </Tooltip>
+
+            <Tooltip title={sidebarCollapsed ? `Targets (${kpis.targetsUp}/${kpis.targetsTotal})` : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'targets' ? 'active' : ''}`}
+                onClick={() => setActiveTab('targets')}
+              >
+                <Server className="nav-icon" />
+                {!sidebarCollapsed && <span>Targets ({kpis.targetsUp}/{kpis.targetsTotal})</span>}
+              </button>
+            </Tooltip>
+
+            <Tooltip title={sidebarCollapsed ? `Alerts ${kpis.firingAlerts > 0 ? `(${kpis.firingAlerts})` : ''}` : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'alerts' ? 'active' : ''}`}
+                onClick={() => setActiveTab('alerts')}
+              >
+                <Bell className="nav-icon" />
+                {!sidebarCollapsed && <span>Alerts {kpis.firingAlerts > 0 && `(${kpis.firingAlerts})`}</span>}
+              </button>
+            </Tooltip>
+
+            <Tooltip title={sidebarCollapsed ? "SRE Lab" : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'sre' ? 'active' : ''}`}
+                onClick={() => setActiveTab('sre')}
+              >
+                <FlaskConical className="nav-icon" />
+                {!sidebarCollapsed && <span>SRE Lab</span>}
+              </button>
+            </Tooltip>
+
+            <Tooltip title={sidebarCollapsed ? "Settings" : ""} placement="right" arrow>
+              <button
+                className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+                onClick={() => setActiveTab('settings')}
+              >
+                <SettingsIcon className="nav-icon" />
+                {!sidebarCollapsed && <span>Settings</span>}
+              </button>
+            </Tooltip>
+          </nav>
+
+          <div className="sidebar-footer">
+            <Tooltip title={sidebarCollapsed ? "Sign Out" : ""} placement="right" arrow>
+              <button
+                className="nav-item"
+                style={{ marginBottom: '8px', color: 'var(--status-critical)' }}
+                onClick={handleLogout}
+              >
+                <LogOut className="nav-icon" />
+                {!sidebarCollapsed && <span>Sign Out</span>}
+              </button>
+            </Tooltip>
+
+            <Tooltip title={sidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'} arrow>
+              <button
+                className="collapse-btn"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              >
+                {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                {!sidebarCollapsed && <span style={{ fontSize: '0.8125rem' }}>Collapse sidebar</span>}
+              </button>
+            </Tooltip>
+          </div>
+        </aside>
+
+        {/* Main View Shell */}
+        <div className="app-main">
+          {/* Top Sticky Header */}
+          <header className="top-header">
+            <div className="header-left">
+              <h1 className="page-title">
+                {activeTab === 'overview' && 'Personalized Overview'}
+                {activeTab === 'metrics' && 'Telemetry & Metrics'}
+                {activeTab === 'targets' && 'Scrape Target Endpoints'}
+                {activeTab === 'alerts' && 'Active Alerts & Rules'}
+                {activeTab === 'sre' && 'SRE Failure Injection Lab'}
+                {activeTab === 'settings' && 'Portal Settings'}
+              </h1>
+              <span className="page-subtitle">User Workspace: {currentUser.email}</span>
             </div>
 
-            <button
-              className="theme-toggle-btn"
-              onClick={fetchTelemetry}
-              disabled={isRefreshing}
-              title="Refresh Telemetry"
-            >
-              <RefreshCw size={18} className={isRefreshing ? 'spin-anim' : ''} />
-            </button>
+            <div className="header-right">
+              {/* Real Docker Environment Indicator (Clickable) */}
+              <Tooltip title="Click to manage Docker Environments" arrow>
+                <button
+                  className="status-pill cursor-pointer border border-theme-glass-strong hover:border-brand-teal transition-all"
+                  onClick={() => setDockerModalOpen(true)}
+                >
+                  <Box size={14} style={{ color: onlineAgents.length > 0 ? 'var(--status-healthy)' : 'var(--status-warning)' }} />
+                  <span style={{ color: 'var(--text-muted)' }}>Docker:</span>
+                  <span style={{ color: onlineAgents.length > 0 ? 'var(--status-healthy)' : 'var(--status-warning)', fontWeight: 600 }}>
+                    {onlineAgents.length > 0 ? `${onlineAgents.length} Online` : 'Not Connected'}
+                  </span>
+                </button>
+              </Tooltip>
 
-            <button
-              className="theme-toggle-btn"
-              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
-            >
-              {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-            </button>
+              {/* Core Platform API Status */}
+              <Tooltip title={backendHealth?.status === 'healthy' ? 'FastAPI Backend Operational' : 'FastAPI Backend Degraded'} arrow>
+                <div className="status-pill">
+                  <span className={`status-indicator-dot ${backendHealth?.status === 'healthy' ? '' : 'down'}`} />
+                  <span>{backendHealth?.status === 'healthy' ? 'Platform API: Operational' : 'Platform API: Degraded'}</span>
+                </div>
+              </Tooltip>
 
-            <button
-              className="theme-toggle-btn"
-              onClick={handleLogout}
-              title="Sign Out of CloudMonitor"
-              style={{ color: 'var(--status-critical)' }}
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-        </header>
+              <Tooltip title="Refresh Telemetry" arrow>
+                <button
+                  className="theme-toggle-btn"
+                  onClick={fetchTelemetry}
+                  disabled={isRefreshing}
+                >
+                  <RefreshCw size={18} className={isRefreshing ? 'spin-anim' : ''} />
+                </button>
+              </Tooltip>
+
+              <Tooltip title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`} arrow>
+                <button
+                  className="theme-toggle-btn"
+                  onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+                >
+                  {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+                </button>
+              </Tooltip>
+
+              <Tooltip title="Sign Out of CloudMonitor" arrow>
+                <button
+                  className="theme-toggle-btn"
+                  onClick={handleLogout}
+                  style={{ color: 'var(--status-critical)' }}
+                >
+                  <LogOut size={18} />
+                </button>
+              </Tooltip>
+            </div>
+          </header>
 
         {/* Dynamic Page Content */}
         <main className="content-body">
           {errorBanner && (
-            <div className="glass-panel" style={{ borderColor: 'var(--status-critical)', color: 'var(--status-critical)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <XCircle size={20} />
-              <span>{errorBanner}</span>
-            </div>
+            <Alert
+              severity="error"
+              onClose={() => setErrorBanner(null)}
+              sx={{
+                mb: 3,
+                borderRadius: '12px',
+                border: '1px solid rgba(239, 119, 119, 0.35)',
+                backgroundColor: 'rgba(239, 119, 119, 0.12)',
+                color: 'var(--status-critical)',
+                '& .MuiAlert-icon': { color: 'var(--status-critical)' },
+              }}
+            >
+              {errorBanner}
+            </Alert>
           )}
 
           {/* VIEW 1: OVERVIEW */}
@@ -1540,25 +1588,44 @@ export default function App() {
         }}
       />
 
-      {/* Confirmation Modal for SRE Actions */}
-      {confirmModal && (
-        <div className="modal-overlay">
-          <div className="modal-dialog">
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '10px', color: 'var(--text-main)' }}>
-              {confirmModal.title}
-            </h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: '1.6' }}>
-              {confirmModal.desc}
-            </p>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setConfirmModal(null)}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => handleExecuteFault(confirmModal.action)}>
-                Confirm Execution
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Confirmation Modal for SRE Actions via MUI Dialog */}
+      <Dialog
+        open={Boolean(confirmModal)}
+        onClose={() => setConfirmModal(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '16px',
+            backgroundColor: 'var(--bg-card-solid)',
+            border: '1px solid var(--border-glass-strong)',
+            backgroundImage: 'none',
+            p: 1,
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-main)' }}>
+          {confirmModal?.title}
+        </DialogTitle>
+        <DialogContent>
+          <p className="text-xs text-theme-muted leading-relaxed">
+            {confirmModal?.desc}
+          </p>
+        </DialogContent>
+        <DialogActions sx={{ p: '12px 16px' }}>
+          <Button onClick={() => setConfirmModal(null)} sx={{ color: 'var(--text-muted)' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => handleExecuteFault(confirmModal?.action)}
+          >
+            Confirm Execution
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
+  </ThemeProvider>
   );
 }
