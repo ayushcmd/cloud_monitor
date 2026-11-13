@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/Icon.png" alt="CloudMonitor logo" width="128" /></p>
+
 # CloudMonitor
 
 A self-hosted observability platform for monitoring Docker hosts and containers.
@@ -40,7 +42,7 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus)](https://prometheus.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
 
 ## Table of contents
 
@@ -615,4 +617,10 @@ The AWS deployment roles are the target scope for each member, and the optional 
 
 ## License
 
-CloudMonitor is licensed under the MIT License. See [LICENSE](LICENSE).
+CloudMonitor is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Community
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
