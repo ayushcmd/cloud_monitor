@@ -48,6 +48,7 @@ import {
 import { getMuiTheme } from './theme';
 import { api } from './api';
 import AuthScreen from './components/AuthScreen';
+import BrandLogo from './components/BrandLogo';
 import ConnectDockerModal from './components/ConnectDockerModal';
 
 // Helper for formatting byte sizes (e.g., memory)
@@ -500,6 +501,7 @@ export default function App() {
       <ThemeProvider theme={muiTheme}>
         <CssBaseline />
         <div className="auth-loading-screen flex flex-col items-center justify-center min-h-screen gap-4 bg-theme-page text-theme-muted">
+          <BrandLogo size={64} />
           <CircularProgress size={36} sx={{ color: 'var(--accent-teal)' }} />
           <p className="font-semibold">Verifying CloudMonitor session...</p>
         </div>
@@ -534,9 +536,7 @@ export default function App() {
         <aside className={`app-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
           <div className="sidebar-header">
             <div className="brand-badge">
-              <div className="brand-icon">
-                <Activity size={20} />
-              </div>
+              <BrandLogo />
               {!sidebarCollapsed && <span className="brand-title">CloudMonitor</span>}
             </div>
           </div>

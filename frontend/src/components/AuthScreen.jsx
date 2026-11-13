@@ -3,6 +3,7 @@ import { Activity, Lock, Mail, ArrowRight, ShieldCheck, Sun, Moon, Info } from '
 import { Alert, CircularProgress, Tooltip, IconButton, Chip } from '@mui/material';
 import { api } from '../api';
 import PasswordToggleButton from './PasswordToggleButton';
+import BrandLogo from './BrandLogo';
 
 export default function AuthScreen({ onAuthSuccess, sessionExpired = false, currentTheme, onToggleTheme }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
@@ -98,9 +99,7 @@ export default function AuthScreen({ onAuthSuccess, sessionExpired = false, curr
         <div className="glass-panel auth-card p-8 sm:p-9 text-center rounded-2xl shadow-xl border border-theme-glass bg-theme-card backdrop-blur-md">
           {/* Brand header */}
           <div className="auth-brand mb-6 text-center">
-            <div className="brand-icon w-12 h-12 rounded-xl mx-auto mb-3.5 bg-gradient-to-br from-brand-teal to-brand-cyan flex items-center justify-center text-white shadow-lg shadow-teal-500/20">
-              <Activity size={26} />
-            </div>
+            <BrandLogo size={64} className="mx-auto mb-3.5" />
             <h1 className="auth-title text-2xl font-bold tracking-tight text-theme-main">CloudMonitor</h1>
             <p className="auth-subtitle text-sm text-theme-muted mt-1 leading-relaxed">
               {mode === 'login'
