@@ -26,7 +26,7 @@ def test_unauthenticated_provisioning_rejected():
     assert res.status_code == 401
 
 def test_production_provisioning_rejected():
-    """Calls to /dev/provision-local must return 403 Forbidden in production."""
+    """Calls to /dev/provision-local must return 403 Forbidden in production and test environments."""
     _, token = create_authenticated_user("sec_prod")
     prod_env = {
         "APP_ENV": "production",
@@ -43,7 +43,17 @@ def test_production_provisioning_rejected():
         assert res.status_code == 403
         assert "restricted" in res.json()["detail"].lower()
 
-def test_forged_forwarding_headers_rejected():
+    # Regression assertion: provisioning remains forbidden in APP_ENV=test
+    with patch.dict("os.environ", {"APP_ENV": "test"}):
+        res_test = client.post(
+            "/api/v1/agents/dev/provision-local",
+            headers={"Authorization": f"Bearer {token}"},
+            json={}
+        )
+        assert res_test.status_code == 403
+        assert "restricted" in res_test.json()["detail"].lower()
+
+def test_forged_forwarding_headers_rejected(enable_dev_provisioning):
     """Clients attempting to spoof locality via public X-Forwarded-For must be rejected with 403."""
     _, token = create_authenticated_user("sec_spoof")
     auth = {"Authorization": f"Bearer {token}"}
@@ -75,7 +85,7 @@ def test_forged_forwarding_headers_rejected():
     assert res3.status_code == 403
     assert "untrusted" in res3.json()["detail"].lower()
 
-def test_cross_tenant_provisioning_rejected():
+def test_cross_tenant_provisioning_rejected(enable_dev_provisioning):
     """A tenant cannot provision or reuse an agent belonging to another tenant."""
     _, user_a_token = create_authenticated_user("tenant_a")
     _, user_b_token = create_authenticated_user("tenant_b")
@@ -93,7 +103,7 @@ def test_cross_tenant_provisioning_rejected():
     assert res.status_code == 403
     assert "another tenant" in res.json()["detail"].lower()
 
-def test_revoked_agent_provisioning_rejected():
+def test_revoked_agent_provisioning_rejected(enable_dev_provisioning):
     """A revoked agent cannot be reused during auto-provisioning."""
     _, token = create_authenticated_user("revoked_prov")
     auth = {"Authorization": f"Bearer {token}"}

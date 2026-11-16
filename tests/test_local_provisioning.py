@@ -23,7 +23,17 @@ def test_local_provisioning_production_forbidden():
         assert res.status_code == 403
         assert "strictly restricted to trusted local development" in res.json()["detail"]
 
-def test_local_provisioning_reuses_existing_agent():
+    # Regression assertion: provisioning remains forbidden in APP_ENV=test
+    with patch.dict("os.environ", {"APP_ENV": "test"}):
+        res_test = client.post(
+            "/api/v1/agents/dev/provision-local",
+            headers={"Authorization": f"Bearer {token}"},
+            json={}
+        )
+        assert res_test.status_code == 403
+        assert "strictly restricted to trusted local development" in res_test.json()["detail"]
+
+def test_local_provisioning_reuses_existing_agent(enable_dev_provisioning):
     _, token = create_authenticated_user("reuse_agent")
     auth = {"Authorization": f"Bearer {token}"}
 
@@ -56,7 +66,7 @@ def test_local_provisioning_reuses_existing_agent():
         owned = [a for a in user_agents if a.id == agent_id]
         assert len(owned) == 1
 
-def test_local_provisioning_creates_when_no_agent_exists():
+def test_local_provisioning_creates_when_no_agent_exists(enable_dev_provisioning):
     _, token = create_authenticated_user("fresh_provision")
     auth = {"Authorization": f"Bearer {token}"}
 
