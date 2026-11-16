@@ -30,6 +30,9 @@ def downgrade():
     op.drop_index('ix_sample_recorded_at', table_name='container_metric_samples')
     op.drop_index('ix_sample_tenant_agent_container_time', table_name='container_metric_samples')
     op.drop_table('container_metric_samples')
+    op.execute("UPDATE container_metrics SET cpu_percent = 0 WHERE cpu_percent IS NULL")
+    op.execute("UPDATE container_metrics SET memory_bytes = 0 WHERE memory_bytes IS NULL")
+    op.execute("UPDATE container_metrics SET memory_limit = 0 WHERE memory_limit IS NULL")
     with op.batch_alter_table('container_metrics') as batch:
         batch.alter_column('cpu_percent', existing_type=sa.Float(), nullable=False, server_default='0')
         batch.alter_column('memory_bytes', existing_type=sa.BigInteger(), nullable=False, server_default='0')
