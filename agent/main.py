@@ -43,6 +43,9 @@ def run_agent():
 
     collector = DockerMetricsCollector()
     sender = MetricsSender()
+    # Backend connectivity is independent of Docker discovery.
+    sender.send_heartbeat("unknown")
+    waiting_heartbeat = time.monotonic()
 
     # Wait for Docker connectivity with retry
     docker_ready = False
@@ -52,6 +55,9 @@ def run_agent():
             docker_ready = True
             logger.info("Successfully connected to Docker engine daemon.")
         else:
+            if time.monotonic() - waiting_heartbeat >= config.HEARTBEAT_INTERVAL:
+                sender.send_heartbeat("unknown")
+                waiting_heartbeat = time.monotonic()
             retry_count += 1
             logger.warning(f"Waiting for Docker daemon at {config.DOCKER_HOST}... (attempt {retry_count})")
             time.sleep(min(retry_count * 2, 10))
@@ -78,11 +84,8 @@ def run_agent():
 
             # 2. Collect & Transmit Metrics
             containers_data = collector.collect()
-            if containers_data:
-                logger.debug(f"Collected telemetry for {len(containers_data)} containers.")
-                sender.send_metrics(containers_data)
-            else:
-                logger.info("No active or stopped containers found on this Docker host.")
+            logger.debug(f"Collected telemetry for {len(containers_data)} containers.")
+            sender.send_metrics(containers_data, complete_inventory=collector.complete_inventory)
         except Exception as err:
             logger.error(f"Error during agent telemetry collection loop: {err}")
 

@@ -15,7 +15,8 @@ import {
   ArrowLeft,
   CheckCircle2,
   Monitor,
-  Apple
+  Apple,
+  Zap
 } from 'lucide-react';
 import {
   Dialog,
@@ -31,6 +32,7 @@ import {
   Button
 } from '@mui/material';
 import { api } from '../api';
+import { agentInstallCommand } from '../agentInstall';
 
 export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChange, onSelectHostMetrics }) {
   // Navigation / Wizard step: 'list' | 'step_a' | 'step_b' | 'step_c' | 'step_d' | 'step_e'
@@ -53,11 +55,14 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
   // UI state for Screen C
   const [shellTab, setShellTab] = useState('powershell'); // 'powershell' | 'cmd' | 'bash' | 'compose'
   const [copied, setCopied] = useState(false);
+  const [localInstall, setLocalInstall] = useState(['localhost','127.0.0.1'].includes(window.location.hostname));
 
   // Screen D verification polling state
   const [connectionStatus, setConnectionStatus] = useState(null);
   const [verifySeconds, setVerifySeconds] = useState(0);
   const [verifyTimeout, setVerifyTimeout] = useState(false);
+  const [autoProvisioning, setAutoProvisioning] = useState(false);
+  const [provisionMessage, setProvisionMessage] = useState(null);
 
   // Modals for Rotate / Disconnect
   const [confirmRotate, setConfirmRotate] = useState(null);
@@ -122,13 +127,13 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
           const statusData = await api.getAgentConnectionStatus(activeAgent.id);
           setConnectionStatus(statusData);
 
-          if (statusData.stage === 'connected' || (statusData.container_count > 0 && statusData.status === 'online')) {
+          if (statusData.status === 'online' && (statusData.stage === 'connected' || (!!statusData.last_heartbeat && statusData.container_count > 0))) {
             clearInterval(pollingRef.current);
             await fetchAgents();
             setCurrentStep('step_e');
           }
         } catch (err) {
-          console.warn('Polling connection status:', err);
+          setError(err.message || 'Cannot reach the enrollment backend. Check your session and backend URL.');
         }
       };
 
@@ -147,66 +152,15 @@ export default function ConnectDockerModal({ isOpen, onClose, user, onAgentChang
     }
   }, [currentStep, activeAgent]);
 
+  const activeExistingAgent = agents.find((a) => !a.is_revoked && (a.status === 'online' || a.status === 'connected'));
+  const reusableAgent = agents.find((a) => !a.is_revoked);
+
   if (!isOpen) return null;
 
   const serverUrl = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '');
   const agentSecret = activeKey || activeAgent?.agent_key || 'YOUR_GENERATED_AGENT_KEY';
 
-  const getCommand = () => {
-    if (shellTab === 'powershell') {
-      return `# 1. Remove previous agent container if present (safe retry)
-docker rm -f cloudmonitor-agent 2>$null
-
-# 2. Launch CloudMonitor Agent with read-only Docker socket
-docker run -d \`
-  --name cloudmonitor-agent \`
-  --restart unless-stopped \`
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \`
-  -e CLOUDMONITOR_SERVER="${serverUrl}" \`
-  -e CLOUDMONITOR_AGENT_KEY="${agentSecret}" \`
-  cloudmonitor-agent:latest`;
-    }
-
-    if (shellTab === 'cmd') {
-      return `docker rm -f cloudmonitor-agent 2>nul
-docker run -d ^
-  --name cloudmonitor-agent ^
-  --restart unless-stopped ^
-  -v /var/run/docker.sock:/var/run/docker.sock:ro ^
-  -e CLOUDMONITOR_SERVER="${serverUrl}" ^
-  -e CLOUDMONITOR_AGENT_KEY="${agentSecret}" ^
-  cloudmonitor-agent:latest`;
-    }
-
-    if (shellTab === 'bash') {
-      return `# 1. Remove previous agent container if present (idempotent)
-docker rm -f cloudmonitor-agent 2>/dev/null || true
-
-# 2. Run CloudMonitor Agent (outbound HTTPS, read-only socket)
-docker run -d \\
-  --name cloudmonitor-agent \\
-  --restart unless-stopped \\
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \\
-  -e CLOUDMONITOR_SERVER="${serverUrl}" \\
-  -e CLOUDMONITOR_AGENT_KEY="${agentSecret}" \\
-  cloudmonitor-agent:latest`;
-    }
-
-    if (shellTab === 'compose') {
-      return `services:
-  cloudmonitor-agent:
-    image: cloudmonitor-agent:latest
-    container_name: cloudmonitor-agent
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    environment:
-      - CLOUDMONITOR_SERVER=${serverUrl}
-      - CLOUDMONITOR_AGENT_KEY=${agentSecret}`;
-    }
-
-    return '';
-  };
+  const getCommand = () => agentInstallCommand(shellTab, localInstall, activeAgent?.id || 'host', serverUrl, agentSecret);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(getCommand());
@@ -231,6 +185,28 @@ docker run -d \\
       setError(err.message || 'Host connection creation failed');
     } finally {
       setEnrolling(false);
+    }
+  };
+
+  // Auto-provision local development agent
+  const handleAutoProvision = async (preferredName) => {
+    setAutoProvisioning(true);
+    setError(null);
+    setProvisionMessage(null);
+    try {
+      const res = await api.localProvisionAgent({
+        name: preferredName || hostName || 'Local Docker Host',
+        os_type: selectedOS,
+        reuse_existing: true,
+      });
+      setActiveAgent({ id: res.agent_id, name: res.name, status: res.status });
+      setProvisionMessage(res.message);
+      await fetchAgents();
+      setCurrentStep('step_d');
+    } catch (err) {
+      setError(err.message || 'Automatic local provisioning failed. Ensure Docker Desktop is running.');
+    } finally {
+      setAutoProvisioning(false);
     }
   };
 
@@ -404,7 +380,60 @@ docker run -d \\
         {/* ============================================================ */}
         {currentStep === 'step_a' && (
           <div>
-            <h4 className="text-base font-semibold text-theme-main mb-1">Select Your Operating System</h4>
+            {activeExistingAgent && (
+              <div className="mb-4 p-3.5 rounded-xl bg-status-healthy/10 border border-status-healthy/30 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 size={20} className="text-status-healthy flex-shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-theme-main">Active Docker Host Already Connected</div>
+                    <div className="text-xs text-theme-muted">
+                      Host &quot;{activeExistingAgent.name}&quot; is online and actively reporting container telemetry.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary px-3 py-1.5 text-xs rounded-lg font-semibold cursor-pointer"
+                  onClick={() => {
+                    setActiveAgent(activeExistingAgent);
+                    setCurrentStep('step_e');
+                  }}
+                >
+                  View Host Details
+                </button>
+              </div>
+            )}
+            {localInstall && (
+              <div className="mb-5 p-4 rounded-xl bg-gradient-to-r from-brand-teal/15 via-brand-cyan/15 to-transparent border border-brand-teal/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-teal to-brand-cyan flex items-center justify-center text-white flex-shrink-0 mt-0.5 shadow-sm">
+                    <Zap size={22} />
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-bold text-theme-main flex items-center gap-2">
+                      Local Development Environment Detected
+                      <Chip label="1-Click Auto" size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem', fontWeight: 700 }} />
+                    </h5>
+                    <p className="text-xs text-theme-muted mt-0.5 leading-relaxed">
+                      Starts the CloudMonitor agent automatically in Docker Desktop and begins streaming telemetry immediately with no manual commands.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer shadow-md flex-shrink-0 self-stretch sm:self-auto justify-center"
+                  onClick={() => handleAutoProvision(hostName || 'Local Docker Host')}
+                  disabled={autoProvisioning}
+                >
+                  {autoProvisioning ? <CircularProgress size={16} color="inherit" /> : <Zap size={16} />}
+                  <span>{autoProvisioning ? 'Connecting...' : 'Connect Automatically'}</span>
+                </button>
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-base font-semibold text-theme-main">Manual & Remote Host Setup</h4>
+              <span className="text-xs text-theme-muted">Fallback for external machines</span>
+            </div>
             <p className="text-xs sm:text-sm text-theme-muted mb-4">
               Select the platform hosting your Docker engine. CloudMonitor will tailor the installation commands and socket bindings.
             </p>
@@ -512,22 +541,45 @@ docker run -d \\
                 />
               </div>
 
+              {reusableAgent && (
+                <div className="p-3 rounded-xl bg-brand-cyan/10 border border-brand-cyan/25 flex items-start gap-2.5 text-xs text-theme-muted">
+                  <CheckCircle2 size={16} className="text-brand-cyan flex-shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-theme-main">Existing Host Available: </strong>
+                    Found existing enrolled host &quot;{reusableAgent.name}&quot;. Local auto-provisioning will safely reuse and authenticate this host without creating duplicate database records.
+                  </div>
+                </div>
+              )}
+
               <div className="info-callout p-3.5 rounded-xl bg-theme-input border border-theme-glass flex items-start gap-3">
                 <ShieldCheck size={20} className="text-status-healthy flex-shrink-0 mt-0.5" />
                 <div className="text-xs leading-relaxed text-theme-muted">
                   <strong className="text-theme-main block mb-0.5">Automated & Cryptographically Isolated:</strong>
-                  Clicking <strong>Install & Connect</strong> creates an isolated host record for Tenant #{user?.id} and generates a unique 256-bit secret key. Only a SHA-256 hash is permanently saved in PostgreSQL.
+                  Clicking <strong>Auto-Start</strong> or <strong>Generate Install Script</strong> creates or updates an isolated host record for Tenant #{user?.id} and configures a unique 256-bit secret key. Only a SHA-256 hash is permanently saved in PostgreSQL.
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-2">
+              <div className="flex flex-wrap justify-between items-center gap-2 pt-2">
                 <button type="button" className="btn px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep('step_a')}>
                   <ArrowLeft size={16} /> Back
                 </button>
-                <button type="submit" className="btn btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer" disabled={enrolling || !hostName.trim()}>
-                  {enrolling ? <CircularProgress size={16} color="inherit" /> : <ShieldCheck size={16} />}
-                  <span>{enrolling ? 'Generating Credentials...' : 'Install & Connect'}</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {localInstall && (
+                    <button
+                      type="button"
+                      className="btn btn-primary px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer shadow-md"
+                      onClick={() => handleAutoProvision(hostName)}
+                      disabled={autoProvisioning || enrolling}
+                    >
+                      {autoProvisioning ? <CircularProgress size={16} color="inherit" /> : <Zap size={16} />}
+                      <span>{autoProvisioning ? 'Starting Local Agent...' : '⚡ Auto-Start Local Agent'}</span>
+                    </button>
+                  )}
+                  <button type="submit" className="btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 cursor-pointer bg-theme-card border border-theme-glass hover:border-theme-glass-strong" disabled={enrolling || autoProvisioning || !hostName.trim()}>
+                    {enrolling ? <CircularProgress size={16} color="inherit" /> : <ShieldCheck size={16} />}
+                    <span>{enrolling ? 'Enrolling...' : 'Manual / Remote Setup'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -538,6 +590,46 @@ docker run -d \\
         {/* ============================================================ */}
         {currentStep === 'step_c' && (
           <div>
+            {localInstall ? (
+              <div className="mb-4 p-4 rounded-xl bg-brand-cyan/10 border border-brand-cyan/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-theme-main flex items-center gap-1.5">
+                    <Zap size={16} className="text-brand-cyan" />
+                    Automatic Local Agent Provisioning
+                  </div>
+                  <p className="text-xs text-theme-muted mt-0.5">
+                    CloudMonitor can build the agent image and start the container directly on this Docker Desktop instance.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 cursor-pointer flex-shrink-0 shadow-sm"
+                  onClick={() => handleAutoProvision(activeAgent?.name)}
+                  disabled={autoProvisioning}
+                >
+                  {autoProvisioning ? <CircularProgress size={14} color="inherit" /> : <Zap size={14} />}
+                  <span>{autoProvisioning ? 'Starting Agent...' : '⚡ Auto-Start Local Agent'}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="mb-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5 text-xs text-theme-muted">
+                <AlertCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-theme-main">External Host Security Notice: </strong>
+                  The CloudMonitor web application cannot directly access external Docker hosts without explicit user approval. Run the 1-click script below directly on your remote target machine.
+                </div>
+              </div>
+            )}
+            <div className="mb-2 flex items-center gap-2 text-xs text-theme-muted">
+              <input type="checkbox" id="localInstallCheck" checked={localInstall} onChange={e => setLocalInstall(e.target.checked)} className="cursor-pointer rounded" />
+              <label htmlFor="localInstallCheck" className="cursor-pointer font-medium text-theme-main">Agent runs on this local CloudMonitor Compose machine</label>
+            </div>
+            <Alert severity="info" sx={{my:2}}>
+              {localInstall ? 'Uses cloudmonitor-network and backend:8000. Enroll from this local dashboard only.' : 'Remote host: use the reachable HTTPS URL of the same backend that enrolled this key. Clone this repository on that host first.'}
+              <p>From the repository root, create cloudmonitor-agent.env in a text editor with the following contents. Keep this file private and out of Git. Do not paste keys into docker logs, debug output, or support messages.</p>
+              <pre style={{whiteSpace:'pre-wrap', overflowWrap:'anywhere'}}>CLOUDMONITOR_SERVER={localInstall ? 'http://backend:8000' : serverUrl}{'\n'}CLOUDMONITOR_AGENT_KEY={agentSecret}</pre>
+              <p>Docker Desktop: select Linux containers. Missing image: complete the build below. Backend unreachable: check the selected deployment and network. HTTP 401/403: use a key enrolled on this backend, or rotate it. Docker daemon unavailable: start Docker and verify the socket mount. A heartbeat confirms connectivity; container discovery is separate.</p>
+            </Alert>
             <div className="flex items-center justify-between mb-2">
               <div>
                 <h4 className="text-base font-semibold text-theme-main">
@@ -673,10 +765,10 @@ docker run -d \\
                 </div>
               </div>
 
-              <div className={`v-step flex items-start gap-3 p-2 rounded-lg ${connectionStatus?.container_count > 0 ? 'bg-status-healthy/10' : connectionStatus?.last_heartbeat ? 'bg-brand-cyan/10 border border-brand-cyan/25' : 'opacity-50'}`}>
-                {connectionStatus?.container_count > 0 ? (
+              <div className={`v-step flex items-start gap-3 p-2 rounded-lg ${connectionStatus?.stage === 'connected' || (connectionStatus?.container_count > 0 && connectionStatus?.status === 'online') ? 'bg-status-healthy/10' : (connectionStatus?.last_heartbeat || connectionStatus?.stage === 'heartbeat_received') ? 'bg-brand-cyan/10 border border-brand-cyan/25' : 'opacity-50'}`}>
+                {connectionStatus?.stage === 'connected' || (connectionStatus?.container_count > 0 && connectionStatus?.status === 'online') ? (
                   <CheckCircle2 size={18} className="text-status-healthy flex-shrink-0 mt-0.5" />
-                ) : connectionStatus?.last_heartbeat ? (
+                ) : (connectionStatus?.last_heartbeat || connectionStatus?.stage === 'heartbeat_received') ? (
                   <CircularProgress size={16} sx={{ color: 'var(--accent-cyan)', mt: 0.5, flexShrink: 0 }} />
                 ) : (
                   <div className="w-4 h-4 rounded-full border-2 border-theme-glass-strong flex-shrink-0 mt-0.5" />
@@ -684,8 +776,10 @@ docker run -d \\
                 <div className="flex flex-col">
                   <span className="text-xs font-bold text-theme-main">3. Container Discovery & Telemetry Ingestion</span>
                   <span className="text-[0.75rem] text-theme-muted">
-                    {connectionStatus?.container_count > 0
-                      ? `Discovered ${connectionStatus.container_count} container(s) (${connectionStatus.running_count} running)`
+                    {connectionStatus?.stage === 'connected'
+                      ? `Discovered ${connectionStatus?.container_count ?? 0} container(s) (${connectionStatus?.running_count ?? 0} running)`
+                      : connectionStatus?.stage === 'heartbeat_received' || connectionStatus?.last_heartbeat
+                      ? 'Heartbeat verified. Collecting initial container metrics...'
                       : 'Awaiting container cgroup metrics payload...'}
                   </span>
                 </div>
@@ -694,8 +788,28 @@ docker run -d \\
 
             {verifyTimeout && (
               <Alert severity="warning" className="mt-3 text-left" sx={{ borderRadius: '10px' }}>
-                <strong className="block">Connection taking longer than expected?</strong>
-                Ensure Docker Desktop or Docker Engine is running on your machine, then run the setup command in your terminal.
+                <strong className="block mb-1">Verification taking longer than expected</strong>
+                <p className="text-xs mb-2">
+                  No heartbeat or container telemetry received yet for host &quot;{activeAgent?.name || hostName}&quot;.
+                </p>
+                <div className="text-xs space-y-1 mb-2">
+                  <div>• Ensure Docker Desktop or Docker Engine is running.</div>
+                  <div>• Inspect agent logs: <code className="bg-black/20 px-1 py-0.5 rounded font-mono">docker logs cloudmonitor-agent-{activeAgent?.id}</code></div>
+                </div>
+                {localInstall && (
+                  <button
+                    type="button"
+                    className="btn btn-primary px-3 py-1.5 text-xs rounded-lg font-semibold cursor-pointer"
+                    onClick={() => {
+                      setVerifySeconds(0);
+                      setVerifyTimeout(false);
+                      handleAutoProvision(activeAgent?.name);
+                    }}
+                    disabled={autoProvisioning}
+                  >
+                    {autoProvisioning ? 'Starting...' : '⚡ Re-run Auto-Start Local Agent'}
+                  </button>
+                )}
               </Alert>
             )}
 
@@ -879,7 +993,7 @@ docker run -d \\
                                 <button
                                   className="btn py-1 px-2 text-xs rounded-md cursor-pointer"
                                   onClick={() => {
-                                    setActiveAgent(ag);
+                                    setActiveAgent(ag); setActiveKey(null);
                                     setCurrentStep('step_c');
                                   }}
                                 >

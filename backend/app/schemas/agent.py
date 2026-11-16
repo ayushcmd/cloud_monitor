@@ -77,3 +77,18 @@ class HeartbeatResponse(BaseModel):
     status: str = "ok"
     agent_id: int
     recorded_at: datetime
+
+class AgentLocalProvisionRequest(BaseModel):
+    name: Optional[str] = Field("Local Docker Host", max_length=100)
+    reuse_existing: bool = Field(True, description="Reuse existing unrevoked local agent if available")
+    agent_id: Optional[int] = Field(None, description="Specific existing agent ID to reuse")
+
+class AgentLocalProvisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    agent_id: int
+    name: str
+    status: str
+    stage: str
+    reused: bool
+    message: str

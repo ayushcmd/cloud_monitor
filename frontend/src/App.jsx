@@ -1,3 +1,4 @@
+import MetricsDashboard from './components/MetricsDashboard';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   LayoutDashboard,
@@ -711,7 +712,7 @@ export default function App() {
           </header>
 
         {/* Dynamic Page Content */}
-        <main className="content-body">
+        <main className={`content-body ${activeTab === 'metrics' ? 'metrics-content-body' : ''}`}>
           {errorBanner && (
             <Alert
               severity="error"
@@ -843,13 +844,19 @@ export default function App() {
                     <div className="glass-panel kpi-card" style={{ minHeight: '100px' }}>
                       <span className="kpi-label">Total Memory Used</span>
                       <div className="kpi-value" style={{ fontSize: '1.45rem' }}>
-                        {formatBytes(filteredContainerMetrics.reduce((acc, c) => acc + c.memory_bytes, 0))}
+                        {(() => {
+                          const valid = filteredContainerMetrics.filter(c => c.memory_bytes != null);
+                          return valid.length > 0 ? formatBytes(valid.reduce((acc, c) => acc + c.memory_bytes, 0)) : '—';
+                        })()}
                       </div>
                     </div>
                     <div className="glass-panel kpi-card" style={{ minHeight: '100px' }}>
                       <span className="kpi-label">Average Container CPU</span>
                       <div className="kpi-value" style={{ color: 'var(--accent-cyan)' }}>
-                        {(filteredContainerMetrics.reduce((acc, c) => acc + c.cpu_percent, 0) / Math.max(1, filteredContainerMetrics.length)).toFixed(1)}%
+                        {(() => {
+                          const valid = filteredContainerMetrics.filter(c => c.cpu_percent != null);
+                          return valid.length > 0 ? `${(valid.reduce((acc, c) => acc + c.cpu_percent, 0) / valid.length).toFixed(1)}%` : '—';
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -878,11 +885,13 @@ export default function App() {
                             </td>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontFamily: 'var(--font-mono)', minWidth: '45px' }}>{c.cpu_percent.toFixed(1)}%</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', minWidth: '45px' }}>
+                                  {c.cpu_percent != null ? `${c.cpu_percent.toFixed(1)}%` : '—'}
+                                </span>
                               </div>
                             </td>
-                            <td>{formatBytes(c.memory_bytes)}</td>
-                            <td>{c.restart_count}</td>
+                            <td>{c.memory_bytes != null ? formatBytes(c.memory_bytes) : '—'}</td>
+                            <td>{c.restart_count ?? 0}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1055,148 +1064,8 @@ export default function App() {
           )}
 
           {/* VIEW 2: METRICS */}
-          {activeTab === 'metrics' && (
-            <>
-              {/* Host Node Hardware Utilization */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-                <div className="glass-panel">
-                  <div className="panel-header">
-                    <h2 className="panel-title">Host Node CPU Utilization (%)</h2>
-                    <span className="badge badge-info">Node Exporter</span>
-                  </div>
-                  <TrendChart
-                    dataSeries={[{ points: cpuHistory, color: 'var(--accent-cyan)' }]}
-                    height={160}
-                    unit="%"
-                    loading={promMetricsLoading}
-                    error={promMetricsError}
-                    emptyTitle="Host CPU metric unavailable"
-                    emptySubtitle="Awaiting Node Exporter node_cpu_seconds_total samples"
-                  />
-                  <div className="chart-legend">
-                    <span>Current: {cpuHistory.slice(-1)[0]?.val?.toFixed(2) || '—'}%</span>
-                  </div>
-                </div>
+          {activeTab === 'metrics' && <MetricsDashboard refreshInterval={refreshInterval} />}
 
-                <div className="glass-panel">
-                  <div className="panel-header">
-                    <h2 className="panel-title">Host Node Memory Utilization (%)</h2>
-                    <span className="badge badge-info">Node Exporter</span>
-                  </div>
-                  <TrendChart
-                    dataSeries={[{ points: memoryHistory, color: 'var(--accent-teal)' }]}
-                    height={160}
-                    unit="%"
-                    loading={promMetricsLoading}
-                    error={promMetricsError}
-                    emptyTitle="Host RAM metric unavailable"
-                    emptySubtitle="Awaiting Node Exporter node_memory_MemAvailable_bytes samples"
-                  />
-                  <div className="chart-legend">
-                    <span>Current: {memoryHistory.slice(-1)[0]?.val?.toFixed(2) || '—'}%</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* REAL Container Telemetry Table (If metrics ingested) OR Honest Empty State */}
-              {containerMetrics.length > 0 ? (
-                <div className="glass-panel">
-                  <div className="panel-header">
-                    <div>
-                      <h2 className="panel-title">Container Metrics Telemetry</h2>
-                      <span className="panel-subtitle">Real-time cgroup statistics streamed from your Docker hosts</span>
-                    </div>
-                    <span className="badge badge-healthy">{containerMetrics.length} Monitored</span>
-                  </div>
-
-                  <div className="data-table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Container Name</th>
-                          <th>ID</th>
-                          <th>Image</th>
-                          <th>State</th>
-                          <th>Health</th>
-                          <th>CPU %</th>
-                          <th>Memory RSS</th>
-                          <th>Restarts</th>
-                          <th>Last Sync</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {containerMetrics.map((c) => (
-                          <tr key={c.id}>
-                            <td style={{ fontWeight: 600 }}>{c.name}</td>
-                            <td><code>{c.container_id}</code></td>
-                            <td style={{ fontSize: '0.8125rem' }}><code>{c.image || 'unknown'}</code></td>
-                            <td>
-                              <span className={`badge ${c.state === 'running' ? 'badge-healthy' : 'badge-critical'}`}>
-                                {c.state.toUpperCase()}
-                              </span>
-                            </td>
-                            <td>
-                              {c.health_status ? (
-                                <span className={`badge ${c.health_status === 'healthy' ? 'badge-healthy' : 'badge-warning'}`}>
-                                  {c.health_status}
-                                </span>
-                              ) : (
-                                <span style={{ color: 'var(--text-subtle)', fontSize: '0.75rem' }}>N/A</span>
-                              )}
-                            </td>
-                            <td>
-                              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-                                {c.cpu_percent.toFixed(1)}%
-                              </span>
-                            </td>
-                            <td>
-                              {formatBytes(c.memory_bytes)}
-                              {c.memory_limit > 0 && (
-                                <span style={{ color: 'var(--text-subtle)', fontSize: '0.75rem', marginLeft: '4px' }}>
-                                  / {formatBytes(c.memory_limit)}
-                                </span>
-                              )}
-                            </td>
-                            <td>{c.restart_count}</td>
-                            <td style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-                              {c.recorded_at ? new Date(c.recorded_at).toLocaleTimeString() : 'Recent'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <div className="glass-panel docker-empty-card">
-                  <div className="panel-header">
-                    <div>
-                      <h2 className="panel-title">Container Metrics Overview</h2>
-                      <span className="panel-subtitle">Container-level cgroup telemetry via Docker daemon</span>
-                    </div>
-                    <span className="badge badge-warning">Awaiting Telemetry</span>
-                  </div>
-                  <div className="empty-state-content">
-                    <div className="empty-state-icon">
-                      <Box size={36} />
-                    </div>
-                    <h4>No Docker environment connected</h4>
-                    <p>
-                      Live container telemetry (cgroup v2 CPU throttling, memory limits, network socket stats, and restart counters) will stream here once your Docker agent is linked to account <strong>{currentUser.email}</strong>.
-                    </p>
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => setDockerModalOpen(true)}
-                    >
-                      <Box size={16} /> Connect Docker Environment
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* VIEW 3: TARGETS */}
           {activeTab === 'targets' && (
             <div className="glass-panel">
               <div className="panel-header">

@@ -57,7 +57,17 @@ class Settings:
         self.JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
         self.ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
+        # Development Provisioning Feature Flag
+        raw_dev_prov = os.getenv("ENABLE_DEV_PROVISIONING", "true" if self.ENVIRONMENT.lower() == "development" else "false")
+        self.ENABLE_DEV_PROVISIONING: bool = raw_dev_prov.strip().lower() in ("true", "1", "yes")
+
         if self.is_production:
+            if self.ENABLE_DEV_PROVISIONING and os.getenv("ENABLE_DEV_PROVISIONING") is not None:
+                raise RuntimeError(
+                    "Production configuration error: ENABLE_DEV_PROVISIONING must be disabled in production. "
+                    "Automatic Docker provisioning endpoints cannot be enabled in production environments."
+                )
+            self.ENABLE_DEV_PROVISIONING = False
             self.validate_production_configuration()
 
     @property

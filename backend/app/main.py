@@ -7,6 +7,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.config import settings
 from app.database import Base, engine
+from app.models.sample import ContainerMetricSample
 from app.health import router as health_router, set_health_state
 from app.metrics import (
     PrometheusMiddleware,
@@ -17,11 +18,9 @@ from app.routers.auth import router as auth_router
 from app.routers.agents import router as agents_router
 from app.routers.metrics import router as metrics_router
 
-# Ensure database schema exists
-try:
+# Test fixtures use isolated SQLite databases; deployed databases are migrated by Alembic.
+if settings.ENVIRONMENT.lower() == "test":
     Base.metadata.create_all(bind=engine)
-except Exception:
-    pass
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -113,3 +112,6 @@ def toggle_health(status: bool = Query(..., description="True for healthy, False
     """Manually toggles application health gauge to test alert detection without shutting down container."""
     set_health_state(status)
     return {"status": "updated", "is_healthy": status}
+
+from app.routers.monitoring import router as monitoring_router
+app.include_router(monitoring_router, prefix="/api/v1/monitoring", tags=["Monitoring"])

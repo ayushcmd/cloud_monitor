@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -16,6 +16,8 @@ from app.schemas.agent import (
     AgentConnectionStatusResponse,
     HeartbeatRequest,
     HeartbeatResponse,
+    AgentLocalProvisionRequest,
+    AgentLocalProvisionResponse,
 )
 from app.auth.security import (
     get_current_user,
@@ -110,8 +112,8 @@ def list_user_agents(
         metrics = db.query(ContainerMetric).filter(ContainerMetric.agent_id == ag.id).all()
         container_count = len(metrics)
         running_count = sum(1 for m in metrics if m.state == "running")
-        total_cpu = sum(m.cpu_percent for m in metrics)
-        total_mem = sum(m.memory_bytes for m in metrics)
+        total_cpu = sum((m.cpu_percent or 0.0) for m in metrics)
+        total_mem = sum((m.memory_bytes or 0) for m in metrics)
 
         enriched_agents.append(
             AgentResponse(
@@ -158,29 +160,29 @@ def get_connection_status(
         )
 
     now = datetime.now(timezone.utc)
-    metrics = db.query(ContainerMetric).filter(ContainerMetric.agent_id == agent.id).all()
+    metrics = db.query(ContainerMetric).filter(ContainerMetric.agent_id == agent.id, ContainerMetric.state != 'removed').all()
     container_count = len(metrics)
     running_count = sum(1 for m in metrics if m.state == "running")
     stopped_count = sum(1 for m in metrics if m.state != "running")
-    total_cpu = sum(m.cpu_percent for m in metrics)
-    total_mem = sum(m.memory_bytes for m in metrics)
+    total_cpu = sum(m.cpu_percent or 0 for m in metrics)
+    total_mem = sum(m.memory_bytes or 0 for m in metrics)
 
     # Determine connection stage
     if agent.is_revoked:
         stage = "revoked"
         status_val = "revoked"
-    elif container_count > 0 and agent.last_heartbeat:
+    elif agent.last_heartbeat:
         hb = agent.last_heartbeat if agent.last_heartbeat.tzinfo else agent.last_heartbeat.replace(tzinfo=timezone.utc)
         delta_sec = (now - hb).total_seconds()
         if delta_sec <= 90:
-            stage = "connected"
             status_val = "online"
+            if container_count > 0 or agent.status == "connected":
+                stage = "connected"
+            else:
+                stage = "heartbeat_received"
         else:
-            stage = "connected"
+            stage = "offline"
             status_val = "offline"
-    elif agent.last_heartbeat:
-        stage = "heartbeat_received"
-        status_val = "online"
     else:
         stage = "waiting_for_agent"
         status_val = "pending"
@@ -296,7 +298,8 @@ def agent_heartbeat(
     """
     now = datetime.now(timezone.utc)
     current_agent.last_heartbeat = now
-    current_agent.status = "online"
+    if current_agent.status != "connected":
+        current_agent.status = "online"
 
     if payload.hostname:
         current_agent.hostname = payload.hostname
@@ -313,4 +316,203 @@ def agent_heartbeat(
         status="ok",
         agent_id=current_agent.id,
         recorded_at=now,
+    )
+
+@router.post(
+    "/dev/provision-local",
+    response_model=AgentLocalProvisionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Auto-Provision Local Docker Agent (Trusted Development Only)"
+)
+def provision_local_agent(
+    payload: Optional[AgentLocalProvisionRequest] = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Auto-provisions or reuses a local Docker monitoring agent during development.
+    Strictly restricted to local development environments and loopback clients.
+    Reuses existing agents when available to avoid duplicate registrations.
+    Starts the agent container on cloudmonitor-network and configures local backend IPC.
+    """
+    from app.config import Settings
+    settings = Settings()
+    if settings.ENVIRONMENT != "development" or not settings.ENABLE_DEV_PROVISIONING:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local agent auto-provisioning is strictly restricted to trusted local development environments."
+        )
+
+    # Locality & Header Spoofing Protection
+    # 1. Reject untrusted X-Forwarded-For forwarding chains
+    import ipaddress
+    raw_xff = request.headers.get("x-forwarded-for", "").strip() if request else ""
+    if raw_xff:
+        for hop in raw_xff.split(","):
+            clean_hop = hop.strip()
+            if not clean_hop:
+                continue
+            try:
+                hop_ip = ipaddress.ip_address(clean_hop)
+                # Client must originate strictly from loopback or internal Docker bridge
+                if not (hop_ip.is_loopback or hop_ip in ipaddress.ip_network("172.16.0.0/12")):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Untrusted proxy or non-local forwarding detected."
+                    )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Malformed forwarding headers detected."
+                )
+
+    # 2. Reject untrusted X-Real-IP headers
+    raw_x_real = request.headers.get("x-real-ip", "").strip() if request else ""
+    if raw_x_real:
+        try:
+            real_ip = ipaddress.ip_address(raw_x_real)
+            if not (real_ip.is_loopback or real_ip in ipaddress.ip_network("172.16.0.0/12")):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Untrusted origin IP detected in headers."
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Malformed origin IP header detected."
+            )
+
+    # 3. Verify client TCP peer IP is loopback or local Docker bridge
+    client_host = request.client.host if (request and request.client) else ""
+    is_trusted_peer = False
+    if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
+        is_trusted_peer = True
+    elif client_host:
+        try:
+            peer_ip = ipaddress.ip_address(client_host)
+            # Only loopback or Docker bridge subnet (172.16.0.0/12) is eligible, and Host must be local
+            host_header = (request.headers.get("host") or "").lower()
+            is_local_host = any(host_header.startswith(h) for h in ("localhost", "127.0.0.1", "backend", "testserver"))
+            if (peer_ip.is_loopback or peer_ip in ipaddress.ip_network("172.16.0.0/12")) and is_local_host:
+                is_trusted_peer = True
+        except ValueError:
+            pass
+
+    if not is_trusted_peer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local agent auto-provisioning is only permitted from trusted local development connections."
+        )
+
+    req = payload or AgentLocalProvisionRequest()
+    existing_agent = None
+    reused = False
+    raw_key = None
+
+    # Strict Tenant Isolation: Enforce ownership check if agent_id is passed
+    if req.agent_id:
+        target = db.query(Agent).filter(Agent.id == req.agent_id).first()
+        if not target:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent ID {req.agent_id} not found."
+            )
+        if target.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Cannot provision or reuse an agent belonging to another tenant."
+            )
+        if target.is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot reuse a revoked agent."
+            )
+        existing_agent = target
+    elif req.reuse_existing:
+        existing_agent = (
+            db.query(Agent)
+            .filter(Agent.user_id == current_user.id, Agent.is_revoked == False)
+            .order_by(Agent.last_heartbeat.desc().nullslast(), Agent.id.desc())
+            .first()
+        )
+
+    if existing_agent:
+        agent = existing_agent
+        reused = True
+
+        # Check if agent is already online with a running container
+        now = datetime.now(timezone.utc)
+        hb = agent.last_heartbeat if agent.last_heartbeat and agent.last_heartbeat.tzinfo else (
+            agent.last_heartbeat.replace(tzinfo=timezone.utc) if agent.last_heartbeat else None
+        )
+        is_online = hb and (now - hb).total_seconds() <= 90
+
+        from app.services.docker_provisioner import get_docker_client, start_or_restart_local_agent
+        try:
+            d_client = get_docker_client()
+            c_name = f"cloudmonitor-agent-{agent.id}"
+            try:
+                c = d_client.containers.get(c_name)
+                c_running = (c.status == "running")
+            except Exception:
+                c_running = False
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(e)
+            )
+
+        if is_online and c_running:
+            return AgentLocalProvisionResponse(
+                agent_id=agent.id,
+                name=agent.name,
+                status="online",
+                stage="connected" if agent.status == "connected" else "heartbeat_received",
+                reused=True,
+                message=f"Local agent '{agent.name}' (ID: {agent.id}) is already online and streaming telemetry."
+            )
+
+        # Rotate key to start fresh container
+        raw_key, key_hash, key_prefix = generate_agent_key()
+        agent.agent_key_hash = key_hash
+        agent.agent_key_prefix = key_prefix
+        agent.status = "pending"
+        db.commit()
+    else:
+        raw_key, key_hash, key_prefix = generate_agent_key()
+        agent = Agent(
+            user_id=current_user.id,
+            name=(req.name or "Local Docker Host").strip(),
+            os_type="linux",
+            agent_key_hash=key_hash,
+            agent_key_prefix=key_prefix,
+            status="pending",
+            is_revoked=False
+        )
+        db.add(agent)
+        db.commit()
+        db.refresh(agent)
+
+    from app.services.docker_provisioner import start_or_restart_local_agent
+    try:
+        _, msg = start_or_restart_local_agent(
+            agent_id=agent.id,
+            agent_key=raw_key,
+            server_url="http://backend:8000",
+            network_name="cloudmonitor-network"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+
+    return AgentLocalProvisionResponse(
+        agent_id=agent.id,
+        name=agent.name,
+        status="pending",
+        stage="waiting_for_agent",
+        reused=reused,
+        message=msg
     )

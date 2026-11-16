@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.config import settings
 from app.database import Base
-from app.models import User, Agent, ContainerMetric
+from app.models import User, Agent, ContainerMetric, ContainerMetricSample
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -63,3 +63,5 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+
+from app.models.sample import ContainerMetricSample

@@ -14,9 +14,9 @@ class ContainerMetric(Base):
     image = Column(String(255), nullable=True)
     state = Column(String(32), nullable=False, default="unknown")
     health_status = Column(String(32), nullable=True)
-    cpu_percent = Column(Float, nullable=False, default=0.0)
-    memory_bytes = Column(BigInteger, nullable=False, default=0)
-    memory_limit = Column(BigInteger, nullable=False, default=0)
+    cpu_percent = Column(Float, nullable=True)
+    memory_bytes = Column(BigInteger, nullable=True)
+    memory_limit = Column(BigInteger, nullable=True)
     restart_count = Column(Integer, nullable=False, default=0)
     recorded_at = Column(
         DateTime(timezone=True),
