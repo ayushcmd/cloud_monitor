@@ -61,6 +61,7 @@ desktop.ini
 *.pem
 *.key
 .env.agent
+/docs/EC2/
 
 # Local secrets and deployment archives
 .env
@@ -82,3 +83,6 @@ __pycache__/
 # Frontend dependencies and build output
 node_modules/
 dist/
+cloudmonitor-agent.env
+*.db
+.placeholder

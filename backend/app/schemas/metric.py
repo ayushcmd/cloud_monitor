@@ -8,13 +8,18 @@ class ContainerMetricItem(BaseModel):
     image: Optional[str] = Field(None, max_length=255, description="Docker image repository:tag")
     state: str = Field(..., max_length=32, description="Current container lifecycle state (running, exited, paused, etc.)")
     health_status: Optional[str] = Field(None, max_length=32, description="Health status (healthy, unhealthy, starting, none)")
-    cpu_percent: float = Field(..., ge=0.0, description="CPU utilization percentage (0.0 to 100.0 * num_cpus)")
-    memory_bytes: int = Field(..., ge=0, description="Current memory consumption in bytes (RSS/working set)")
-    memory_limit: int = Field(..., ge=0, description="Container memory limit in bytes")
+    cpu_percent: Optional[float] = Field(None, ge=0.0, description="CPU utilization percentage (0.0 to 100.0 * num_cpus)")
+    memory_bytes: Optional[int] = Field(None, ge=0, description="Current memory consumption in bytes (RSS/working set)")
+    memory_limit: Optional[int] = Field(None, ge=0, description="Container memory limit in bytes")
     restart_count: int = Field(..., ge=0, description="Number of times container has restarted")
+    network_rx_bytes: Optional[int] = Field(None, ge=0)
+    network_tx_bytes: Optional[int] = Field(None, ge=0)
+    block_read_bytes: Optional[int] = Field(None, ge=0)
+    block_write_bytes: Optional[int] = Field(None, ge=0)
     recorded_at: Optional[datetime] = None
 
 class MetricIngestRequest(BaseModel):
+    complete_inventory: bool = False
     timestamp: Optional[datetime] = None
     containers: List[ContainerMetricItem] = Field(
         ...,
@@ -38,8 +43,9 @@ class ContainerMetricResponse(BaseModel):
     image: Optional[str] = None
     state: str
     health_status: Optional[str] = None
-    cpu_percent: float
-    memory_bytes: int
-    memory_limit: int
+    cpu_percent: Optional[float]
+    memory_bytes: Optional[int]
+    memory_limit: Optional[int]
     restart_count: int
     recorded_at: datetime
+    monitoring_status: str

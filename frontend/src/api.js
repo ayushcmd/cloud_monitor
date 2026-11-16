@@ -210,6 +210,19 @@ export const api = {
     return await res.json();
   },
 
+  async localProvisionAgent(payload = {}) {
+    const res = await fetchWithTimeout('/api/v1/agents/dev/provision-local', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Local agent auto-provisioning failed (${res.status})`);
+    }
+    return await res.json();
+  },
+
   async rotateAgentKey(agentId) {
     const res = await fetchWithTimeout(`/api/v1/agents/${agentId}/rotate-key`, {
       method: 'POST',
@@ -293,28 +306,28 @@ export const api = {
     return await res.json();
   },
 
-  // Prometheus Endpoints
+  // Authenticated Monitoring Endpoints (Proxied via Backend)
   async getTargets() {
-    const res = await fetchWithTimeout('/prom/api/v1/targets');
+    const res = await fetchWithTimeout('/api/v1/monitoring/targets');
     if (!res.ok) throw new Error(`Prometheus targets query failed (${res.status})`);
     return await res.json();
   },
 
   async getAlerts() {
-    const res = await fetchWithTimeout('/prom/api/v1/alerts');
+    const res = await fetchWithTimeout('/api/v1/monitoring/alerts');
     if (!res.ok) throw new Error(`Prometheus alerts query failed (${res.status})`);
     return await res.json();
   },
 
   async getRules() {
-    const res = await fetchWithTimeout('/prom/api/v1/rules');
+    const res = await fetchWithTimeout('/api/v1/monitoring/rules');
     if (!res.ok) throw new Error(`Prometheus rules query failed (${res.status})`);
     return await res.json();
   },
 
   async queryInstant(promQL) {
     const encoded = encodeURIComponent(promQL);
-    const res = await fetchWithTimeout(`/prom/api/v1/query?query=${encoded}`);
+    const res = await fetchWithTimeout(`/api/v1/monitoring/query?query=${encoded}`);
     if (!res.ok) throw new Error(`PromQL instant query failed (${res.status})`);
     return await res.json();
   },
@@ -322,7 +335,7 @@ export const api = {
   async queryRange(promQL, startSec, endSec, step = '15s') {
     const encoded = encodeURIComponent(promQL);
     const res = await fetchWithTimeout(
-      `/prom/api/v1/query_range?query=${encoded}&start=${startSec}&end=${endSec}&step=${step}`
+      `/api/v1/monitoring/query_range?query=${encoded}&start=${startSec}&end=${endSec}&step=${step}`
     );
     if (!res.ok) throw new Error(`PromQL range query failed (${res.status})`);
     return await res.json();

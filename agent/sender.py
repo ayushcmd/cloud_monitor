@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timezone
 import logging
 from typing import List, Dict, Any, Optional
 import requests
@@ -69,11 +70,13 @@ class MetricsSender:
 
         return False
 
-    def send_metrics(self, containers: List[Dict[str, Any]]) -> bool:
+    def send_metrics(self, containers: List[Dict[str, Any]], complete_inventory: bool = False) -> bool:
         """Submits batch of container telemetry to backend ingestion endpoint with exponential backoff."""
         url = f"{config.SERVER_URL}/api/v1/metrics/ingest"
         payload = {
-            "containers": containers
+            "containers": containers,
+            "complete_inventory": complete_inventory,
+            "timestamp": containers[0]["recorded_at"] if containers and containers[0].get("recorded_at") else datetime.now(timezone.utc).isoformat(),
         }
 
         max_retries = 3

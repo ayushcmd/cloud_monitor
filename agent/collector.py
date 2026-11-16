@@ -14,11 +14,12 @@ def calculate_cpu_percent(stats: Dict[str, Any], precpu_stats: Dict[str, Any]) -
     Formula: (cpu_delta / system_delta) * number_cpus * 100.0
     """
     try:
+        precpu_stats = precpu_stats.get("cpu_stats", precpu_stats)
         cpu_usage = stats.get("cpu_stats", {}).get("cpu_usage", {})
-        precpu_usage = precpu_stats.get("cpu_stats", {}).get("cpu_usage", {})
+        precpu_usage = precpu_stats.get("cpu_usage", {})
 
         cpu_delta = float(cpu_usage.get("total_usage", 0) - precpu_usage.get("total_usage", 0))
-        system_delta = float(stats.get("cpu_stats", {}).get("system_cpu_usage", 0) - precpu_stats.get("cpu_stats", {}).get("system_cpu_usage", 0))
+        system_delta = float(stats.get("cpu_stats", {}).get("system_cpu_usage", 0) - precpu_stats.get("system_cpu_usage", 0))
 
         online_cpus = stats.get("cpu_stats", {}).get("online_cpus")
         if not online_cpus:
@@ -93,6 +94,7 @@ class DockerMetricsCollector:
         client = self.get_client()
         containers = client.containers.list(all=True)
         results = []
+        self.complete_inventory = True
         now = datetime.now(timezone.utc).isoformat()
 
         for container in containers:
@@ -106,18 +108,28 @@ class DockerMetricsCollector:
                 restart_count = attrs.get("RestartCount", 0)
 
                 # Stream stats once (stream=False)
-                cpu_percent = 0.0
-                memory_bytes = 0
-                memory_limit = 0
+                cpu_percent = None
+                memory_bytes = None
+                memory_limit = None
 
+                network_rx_bytes = network_tx_bytes = block_read_bytes = block_write_bytes = None
                 if state == "running":
                     try:
                         raw_stats = container.stats(stream=False)
                         precpu_stats = raw_stats.get("precpu_stats", {})
                         cpu_percent = calculate_cpu_percent(raw_stats, precpu_stats)
                         memory_bytes, memory_limit = calculate_memory_usage(raw_stats)
+                        networks = raw_stats.get("networks", {})
+                        if networks:
+                            network_rx_bytes = sum(max(0, n.get("rx_bytes", 0)) for n in networks.values())
+                            network_tx_bytes = sum(max(0, n.get("tx_bytes", 0)) for n in networks.values())
+                        io_entries = raw_stats.get("blkio_stats", {}).get("io_service_bytes_recursive") or []
+                        if io_entries:
+                            block_read_bytes = sum(max(0, n.get("value", 0)) for n in io_entries if n.get("op", "").lower() == "read")
+                            block_write_bytes = sum(max(0, n.get("value", 0)) for n in io_entries if n.get("op", "").lower() == "write")
                     except Exception as stats_err:
                         logger.debug(f"Could not read stats for {container.name}: {stats_err}")
+                        cpu_percent = memory_bytes = memory_limit = None
 
                 # Image name resolution
                 image_name = "unknown"
@@ -136,9 +148,14 @@ class DockerMetricsCollector:
                     "memory_bytes": memory_bytes,
                     "memory_limit": memory_limit,
                     "restart_count": restart_count,
+                    "network_rx_bytes": network_rx_bytes,
+                    "network_tx_bytes": network_tx_bytes,
+                    "block_read_bytes": block_read_bytes,
+                    "block_write_bytes": block_write_bytes,
                     "recorded_at": now,
                 })
             except Exception as item_err:
+                self.complete_inventory = False
                 logger.warning(f"Error inspecting container {container.id[:12]}: {item_err}")
                 continue
 
