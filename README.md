@@ -600,7 +600,7 @@ Automated production deployment is a **known limitation, not a confirmed healthy
 
 CloudMonitor is a collaborative cloud computing project developed by three students across three primary workstreams: backend development and monitoring APIs; frontend development and dashboard; and AWS cloud infrastructure, DevOps and observability. The responsibilities below combine the team's presentation with implementation and deployment details recorded in this README.
 
-### 1. Sarnendu Das — Backend Development & Monitoring API
+### 1. Sarnendu Das ([blackpython34](https://github.com/blackpython34)) — Backend Development & Monitoring API
 
 **Roll Number:** 24a12res592  
 **Primary Responsibility:** Custom Backend, API Services & Metric Processing
@@ -616,7 +616,7 @@ CloudMonitor is a collaborative cloud computing project developed by three stude
 - Assigned AWS deployment work: deploy the backend container on EC2, distribute its image via Amazon ECR and configure port 8000 networking/security-group access.
 - **Optional extension:** Scripted or automated ECR image pushes.
 
-### 2. Parveen Kumar — Frontend Development & Dashboard
+### 2. Parveen Kumar ([Parveen-collab](https://github.com/Parveen-collab)) — Frontend Development & Dashboard
 
 **Roll Number:** 24a12res426  
 **Primary Responsibility:** React Dashboard, Visualizations & Frontend Integration
