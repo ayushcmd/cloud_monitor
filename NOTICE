@@ -1,5 +1,8 @@
 CloudMonitor
 Copyright 2026 Cloud Monitor Contributors
 
-Licensed under the Apache License, Version 2.0. See LICENSE.
-Third-party dependencies retain their respective licenses and notices.
+Proposed licensing for future releases of original CloudMonitor contributions: GNU GPL version 3 only (GPL-3.0-only), subject to confirmation that the rights holders permit the change. See LICENSE.
+
+The Apache License 2.0 previously used by this project and its original NOTICE are preserved at LICENSES/Apache-2.0-previous.txt and LICENSES/NOTICE-Apache-previous.txt. Earlier Apache-licensed grants are not revoked.
+
+Historical contributor attribution remains intact. Third-party dependencies, assets, and incorporated materials retain their respective license terms. Confirm GPL compatibility and copyright holder consent before merging or publishing a GPL-labeled release.

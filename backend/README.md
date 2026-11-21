@@ -225,4 +225,4 @@ The backend natively exports standard Prometheus metrics:
 
 ## 9. License
 
-This project is licensed under the [Apache License 2.0](../LICENSE).
+The proposed license for future original CloudMonitor distributions is [GNU GPL v3.0 only](../LICENSE), pending confirmation of contributor rights and dependency compatibility. Previous Apache 2.0 terms are preserved in [LICENSES/Apache-2.0-previous.txt](../LICENSES/Apache-2.0-previous.txt).

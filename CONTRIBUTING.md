@@ -60,9 +60,7 @@ Submitting a pull request does not authorize a production deployment.
 
 ## Licensing and assets
 
-Contributions are submitted under the [Apache License 2.0](LICENSE), unless
-explicitly stated otherwise and agreed with maintainers. Submit only work you
-have permission to contribute and retain third-party attribution notices.
+**Licensing change under review:** CloudMonitor is proposing [GNU GPL v3.0 only](LICENSE) for future contributions and distributions. A pull request does not itself establish the contributor's consent to relicense existing work. Contributors should explicitly confirm their licensing agreement with maintainers before new changes are accepted under GPLv3. Prior [Apache License 2.0](LICENSES/Apache-2.0-previous.txt) grants remain valid for earlier versions. Submit only work you have permission to contribute, and retain third-party copyright and attribution notices.
 
 The logo source is `docs/Icon.png`; its unchanged web copy is
 `frontend/public/cloudmonitor-logo.png`. Keep both copies synchronized when
