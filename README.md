@@ -80,7 +80,7 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 - **Stronger security boundaries:** Authenticated monitoring endpoints, tenant-scoped metric access, additional provisioning safeguards and restricted direct Prometheus exposure.
 - **Improved monitoring accuracy:** More explicit offline, stale, unhealthy and removed statuses, with unavailable readings shown as missing rather than misleading zeroes.
 - **Regression coverage:** Expanded tests for agent connection, container history, local provisioning, monitoring dashboards and security.
-- **Team documentation:** An updated responsibility breakdown covering Backend & Monitoring API, Frontend & Dashboard, and AWS Cloud & DevOps ([PR #31](https://github.com/ayushcmd/cloud_monitor/pull/31)).
+- **Team documentation:** Updated responsibilities for [Sarnendu Das](https://github.com/blackpython34) (Backend & Monitoring API), [Parveen Kumar](https://github.com/Parveen-collab) (Frontend & Dashboard), and [Ayush Raj](https://github.com/ayushcmd) (AWS Cloud & DevOps), as documented in [PR #31](https://github.com/ayushcmd/cloud_monitor/pull/31).
 
 **Upgrade notes:** Apply the new Alembic migration, review Docker agent permissions and enrollment settings, preserve existing database volumes and secrets, and validate monitoring connectivity after deployment. Automatic Docker agent provisioning is intended for trusted local development environments; remote hosts use the manual enrollment path.
 
