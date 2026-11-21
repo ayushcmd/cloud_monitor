@@ -42,7 +42,7 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)](https://www.docker.com/)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?logo=prometheus)](https://prometheus.io/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue)](LICENSE)
 
 ## Table of contents
 
@@ -699,7 +699,7 @@ See [AWS deployment](#aws-deployment) and [Known limitations](#known-limitations
 
 ## License
 
-CloudMonitor is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+**Proposed for future distributions:** GNU General Public License v3.0 only ([GPL-3.0-only](LICENSE)), subject to confirming contributor relicensing permissions and compatibility with third-party components. See [NOTICE](NOTICE). The previous [Apache License 2.0](LICENSES/Apache-2.0-previous.txt) and [historical NOTICE](LICENSES/NOTICE-Apache-previous.txt) are preserved; permissions granted for earlier Apache-licensed distributions are not withdrawn.
 
 ## Community
 
