@@ -1,7 +1,7 @@
 {
   "name": "cloudmonitor-frontend",
   "private": true,
-  "license": "Apache-2.0",
+  "license": "GPL-3.0-only",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
