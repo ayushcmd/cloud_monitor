@@ -46,6 +46,7 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 
 ## Table of contents
 
+- [What's new in v2.0.0](#whats-new-in-v200)
 - [Overview](#overview)
 - [Live demo](#live-demo)
 - [Screenshots](#screenshots)
@@ -68,6 +69,22 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 - [Team](#team)
 - [Documentation](#documentation)
 - [License](#license)
+
+## What's new in v2.0.0
+
+**CloudMonitor v2.0.0 — Major Observability & Docker Monitoring Update** expands the monitoring and agent-onboarding capabilities introduced in v1.0.0. This summary describes source changes merged in [PR #29](https://github.com/ayushcmd/cloud_monitor/pull/29); it does not certify their availability in every deployment.
+
+- **Richer observability:** Host, API Performance, Prometheus Health and Docker Container dashboards with responsive charts, KPI summaries, selectable time ranges (15m / 1h / 6h / 24h) and refresh controls.
+- **Historical Docker telemetry:** Timestamped CPU, memory, network and block I/O samples, container lifecycle events, agent/container filtering and a database migration for metric history.
+- **Easier Docker onboarding:** Guided local agent provisioning, existing-agent reuse, connection verification and manual setup options for remote hosts.
+- **Stronger security boundaries:** Authenticated monitoring endpoints, tenant-scoped metric access, additional provisioning safeguards and restricted direct Prometheus exposure.
+- **Improved monitoring accuracy:** More explicit offline, stale, unhealthy and removed statuses, with unavailable readings shown as missing rather than misleading zeroes.
+- **Regression coverage:** Expanded tests for agent connection, container history, local provisioning, monitoring dashboards and security.
+- **Team documentation:** Updated responsibilities for [Sarnendu Das](https://github.com/blackpython34) (Backend & Monitoring API), [Parveen Kumar](https://github.com/Parveen-collab) (Frontend & Dashboard), and [Ayush Raj](https://github.com/ayushcmd) (AWS Cloud & DevOps), as documented in [PR #31](https://github.com/ayushcmd/cloud_monitor/pull/31).
+
+**Upgrade notes:** Apply the new Alembic migration, review Docker agent permissions and enrollment settings, preserve existing database volumes and secrets, and validate monitoring connectivity after deployment. Automatic Docker agent provisioning is intended for trusted local development environments; remote hosts use the manual enrollment path.
+
+**Release notes:** See the published [CloudMonitor v2.0.0 GitHub release](https://github.com/ayushcmd/cloud_monitor/releases/tag/v2.0.0) for the full changelog and upgrade guidance. The v2.0.0 tag was created before this README documentation update; merging this PR updates `main` but does not change the existing release tag.
 
 ## Overview
 
@@ -631,7 +648,7 @@ CloudMonitor is a collaborative cloud computing project developed by three stude
 - Assigned AWS deployment work: deploy the frontend container on EC2, serve it publicly using Nginx on ports 80 and 443, and run post-deployment checks with the test suite.
 - **Optional extension:** Add Amazon CloudFront in front of the frontend.
 
-### 3. Ayush Raj — AWS Cloud Infrastructure, DevOps & Observability
+### 3. Ayush Raj ([ayushcmd](https://github.com/ayushcmd)) — AWS Cloud Infrastructure, DevOps & Observability
 
 **Roll Number:** 24a12res897  
 **Primary Responsibility:** AWS Cloud, Infrastructure Deployment, CI/CD, Containerization & Monitoring
