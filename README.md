@@ -84,7 +84,7 @@ CloudMonitor combines a React dashboard, a FastAPI backend, PostgreSQL persisten
 
 **Upgrade notes:** Apply the new Alembic migration, review Docker agent permissions and enrollment settings, preserve existing database volumes and secrets, and validate monitoring connectivity after deployment. Automatic Docker agent provisioning is intended for trusted local development environments; remote hosts use the manual enrollment path.
 
-**Release notes:** Full details will be published with the [v2.0.0 GitHub release](https://github.com/ayushcmd/cloud_monitor/releases/tag/v2.0.0) after the documentation is reviewed and merged.
+**Release notes:** See the published [CloudMonitor v2.0.0 GitHub release](https://github.com/ayushcmd/cloud_monitor/releases/tag/v2.0.0) for the full changelog and upgrade guidance. The v2.0.0 tag was created before this README documentation update; merging this PR updates `main` but does not change the existing release tag.
 
 ## Overview
 
